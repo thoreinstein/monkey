@@ -60,6 +60,11 @@ fn parseStatement(self: *Self) !?ast.Statement {
 
             return .{ .let_statement = let };
         },
+        .return_ => {
+            const ret = try self.parseReturnStatement() orelse return null;
+
+            return .{ .return_statement = ret };
+        },
         else => return null,
     }
 }
@@ -76,6 +81,18 @@ fn parseLetStatement(self: *Self) !?ast.LetStatement {
     if (!(try self.expectPeek(.assign))) return null;
 
     //TODO: We're skipping the expressoins until we encounter a semicolon
+    while (!self.currentTokenIs(.semicolon)) self.nextToken();
+
+    return statement;
+}
+
+fn parseReturnStatement(self: *Self) !?ast.ReturnStatement {
+    const statement = ast.ReturnStatement{
+        .token = self.current_token,
+    };
+
+    self.nextToken();
+
     while (!self.currentTokenIs(.semicolon)) self.nextToken();
 
     return statement;
@@ -122,17 +139,8 @@ test "let statements" {
         \\let foobar = 838383;
     ;
 
-    const lexer = Lexer.init(input);
-    var parser = init(testing.allocator, lexer);
-    defer parser.deinit();
-
-    var program = try parser.parseProgram() orelse {
-        std.debug.print("parseProgram returned null\n", .{});
-        return error.ProgramParse;
-    };
+    var program = try parseAndCheckProgram(input);
     defer program.statements.deinit(testing.allocator);
-
-    try checkParserErrors(parser);
 
     if (program.statements.items.len != 3) {
         std.debug.print("parseProgram returned null\n", .{});
@@ -154,15 +162,58 @@ test "let statements" {
     }
 }
 
+test "return statements" {
+    const input =
+        \\return 5;
+        \\return 10;
+        \\return 993322;
+    ;
+
+    var program = try parseAndCheckProgram(input);
+    defer program.statements.deinit(testing.allocator);
+
+    if (program.statements.items.len != 3) {
+        std.debug.print("parseProgram returned null\n", .{});
+        return error.NumProgramStatements;
+    }
+
+    for (program.statements.items) |statement| {
+        const return_stmt = switch (statement) {
+            .return_statement => |rs| rs,
+            else => {
+                std.debug.print("stmt not ReturnStatement. got={s}\n", .{@tagName(statement)});
+                return error.WrongStatementType;
+            },
+        };
+
+        try testing.expectEqualStrings("return", return_stmt.tokenLiteral());
+    }
+}
+
+fn parseAndCheckProgram(input: []const u8) !ast.Program {
+    const lexer = Lexer.init(input);
+    var parser = init(testing.allocator, lexer);
+    defer parser.deinit();
+
+    const program = try parser.parseProgram() orelse {
+        std.debug.print("parseProgram returned null\n", .{});
+        return error.ProgramParse;
+    };
+
+    try checkParserErrors(parser);
+
+    return program;
+}
+
 fn testLetStatement(statement: ast.Statement, name: []const u8) !void {
     try testing.expectEqualStrings("let", statement.tokenLiteral());
 
     const let_stmt = switch (statement) {
         .let_statement => |ls| ls,
-        // else => {
-        //     std.debug.print("stmt not LetStatement. got={s}\n", .{@tagName(statement)});
-        //     return error.WrongStatementType;
-        // },
+        else => {
+            std.debug.print("stmt not LetStatement. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
     };
 
     try testing.expectEqualStrings(name, let_stmt.name.value);
@@ -170,5 +221,6 @@ fn testLetStatement(statement: ast.Statement, name: []const u8) !void {
 }
 
 fn checkParserErrors(parser: Self) !void {
+    for (parser.errors_.items) |err| std.debug.print("{s}", .{err});
     try testing.expectEqual(@as(usize, 0), parser.errors_.items.len);
 }

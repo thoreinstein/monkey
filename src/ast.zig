@@ -20,6 +20,7 @@ pub const Statement = union(enum) {
     const Self = @This();
 
     let_statement: LetStatement,
+    return_statement: ReturnStatement,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
@@ -58,6 +59,17 @@ pub const LetStatement = struct {
     token: token.Token,
     name: Identifier = undefined,
     value: Expression = undefined,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+};
+
+pub const ReturnStatement = struct {
+    const Self = @This();
+
+    token: token.Token,
+    return_value: Expression = undefined,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return self.token.literal;
