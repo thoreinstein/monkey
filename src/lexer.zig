@@ -19,26 +19,42 @@ pub fn init(input: []const u8) Self {
     return lexer;
 }
 
-pub fn readChar(self: *Self) void {
-    self.ch = if (self.read_position >= self.input.len) 0 else self.input[self.read_position];
-    self.position = self.read_position;
-    self.read_position += 1;
-}
-
 pub fn nextToken(self: *Self) token.Token {
     self.skipWhitespace();
 
     const tok: token.Token = switch (self.ch) {
-        '=' => .{ .kind = .assign, .literal = "=" },
         ';' => .{ .kind = .semicolon, .literal = ";" },
+        '-' => .{ .kind = .minus, .literal = "-" },
+        '/' => .{ .kind = .slash, .literal = "/" },
+        '*' => .{ .kind = .asterisk, .literal = "*" },
+        '<' => .{ .kind = .lt, .literal = "<" },
+        '>' => .{ .kind = .gt, .literal = ">" },
         '(' => .{ .kind = .lparen, .literal = "(" },
         ')' => .{ .kind = .rparen, .literal = ")" },
         ',' => .{ .kind = .comma, .literal = "," },
         '+' => .{ .kind = .plus, .literal = "+" },
         '{' => .{ .kind = .lbrace, .literal = "{" },
         '}' => .{ .kind = .rbrace, .literal = "}" },
-        '0' => .{ .kind = .eof, .literal = "" },
-        else => {
+        0 => .{ .kind = .eof, .literal = "" },
+        '=' => blk: {
+            if (self.peekChar() == '=') {
+                self.readChar();
+
+                break :blk .{ .kind = .eq, .literal = "==" };
+            }
+
+            break :blk .{ .kind = .assign, .literal = "=" };
+        },
+        '!' => blk: {
+            if (self.peekChar() == '=') {
+                self.readChar();
+
+                break :blk .{ .kind = .not_eq, .literal = "!=" };
+            }
+
+            break :blk .{ .kind = .bang, .literal = "!" };
+        },
+        else => blk: {
             if (isLetter(self.ch)) {
                 const literal = self.readIdentifier();
 
@@ -52,7 +68,7 @@ pub fn nextToken(self: *Self) token.Token {
                 return .{ .kind = .int, .literal = self.readNumber() };
             }
 
-            return .{ .kind = .illegal, .literal = "" };
+            break :blk .{ .kind = .illegal, .literal = "" };
         },
     };
 
@@ -77,6 +93,16 @@ fn readNumber(self: *Self) []const u8 {
     return self.input[pos..self.position];
 }
 
+fn readChar(self: *Self) void {
+    self.ch = if (self.read_position >= self.input.len) 0 else self.input[self.read_position];
+    self.position = self.read_position;
+    self.read_position += 1;
+}
+
+fn peekChar(self: *const Self) u8 {
+    return if (self.read_position >= self.input.len) 0 else self.input[self.read_position];
+}
+
 fn skipWhitespace(self: *Self) void {
     while (self.ch == ' ' or self.ch == '\t' or self.ch == '\n' or self.ch == '\r') self.readChar();
 }
@@ -99,6 +125,17 @@ test "next token" {
         \\};
         \\
         \\let result = add(five, ten);
+        \\!-/*5;
+        \\5 < 10 > 5;
+        \\
+        \\if (5 < 10) {
+        \\  return true;
+        \\} else {
+        \\  return false;
+        \\}
+        \\
+        \\10 == 10;
+        \\10 != 9;
     ;
 
     const tests = [_]struct {
@@ -141,12 +178,51 @@ test "next token" {
         .{ .kind = .ident, .literal = "ten" },
         .{ .kind = .rparen, .literal = ")" },
         .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .bang, .literal = "!" },
+        .{ .kind = .minus, .literal = "-" },
+        .{ .kind = .slash, .literal = "/" },
+        .{ .kind = .asterisk, .literal = "*" },
+        .{ .kind = .int, .literal = "5" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .int, .literal = "5" },
+        .{ .kind = .lt, .literal = "<" },
+        .{ .kind = .int, .literal = "10" },
+        .{ .kind = .gt, .literal = ">" },
+        .{ .kind = .int, .literal = "5" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .if_, .literal = "if" },
+        .{ .kind = .lparen, .literal = "(" },
+        .{ .kind = .int, .literal = "5" },
+        .{ .kind = .lt, .literal = "<" },
+        .{ .kind = .int, .literal = "10" },
+        .{ .kind = .rparen, .literal = ")" },
+        .{ .kind = .lbrace, .literal = "{" },
+        .{ .kind = .return_, .literal = "return" },
+        .{ .kind = .true_, .literal = "true" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .rbrace, .literal = "}" },
+        .{ .kind = .else_, .literal = "else" },
+        .{ .kind = .lbrace, .literal = "{" },
+        .{ .kind = .return_, .literal = "return" },
+        .{ .kind = .false_, .literal = "false" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .rbrace, .literal = "}" },
+        .{ .kind = .int, .literal = "10" },
+        .{ .kind = .eq, .literal = "==" },
+        .{ .kind = .int, .literal = "10" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .int, .literal = "10" },
+        .{ .kind = .not_eq, .literal = "!=" },
+        .{ .kind = .int, .literal = "9" },
+        .{ .kind = .semicolon, .literal = ";" },
     };
 
     var lexer = init(input);
 
-    for (tests) |t| {
+    for (tests, 0..) |t, i| {
         const tok = lexer.nextToken();
+
+        errdefer std.debug.print("Test failed at index {d}: {}", .{ i, tests[i] });
 
         try testing.expectEqual(t.kind, tok.kind);
         try testing.expectEqualStrings(t.literal, tok.literal);
