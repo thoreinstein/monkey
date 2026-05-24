@@ -1,4 +1,5 @@
 const std = @import("std");
+const testing = std.testing;
 
 const token = @import("token.zig");
 
@@ -14,6 +15,12 @@ pub const Node = union(enum) {
             inline else => |n| n.tokenLiteral(),
         };
     }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        return switch (self) {
+            inline else => |n| n.write(out),
+        };
+    }
 };
 
 pub const Statement = union(enum) {
@@ -21,10 +28,17 @@ pub const Statement = union(enum) {
 
     let_statement: LetStatement,
     return_statement: ReturnStatement,
+    expression_statement: ExpressionStatement,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
-            inline else => |n| n.tokenLiteral(),
+            inline else => |s| s.tokenLiteral(),
+        };
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        return switch (self) {
+            inline else => |s| s.write(out),
         };
     }
 };
@@ -36,7 +50,13 @@ pub const Expression = union(enum) {
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
-            inline else => |n| n.tokenLiteral(),
+            inline else => |e| e.tokenLiteral(),
+        };
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        return switch (self) {
+            inline else => |e| e.write(out),
         };
     }
 };
@@ -51,6 +71,10 @@ pub const Program = struct {
 
         return "";
     }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        for (self.statements.items) |s| try s.write(out);
+    }
 };
 
 pub const LetStatement = struct {
@@ -58,10 +82,18 @@ pub const LetStatement = struct {
 
     token: token.Token,
     name: Identifier = undefined,
-    value: Expression = undefined,
+    value: ?Expression = null,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        try out.print("{s} ", .{self.tokenLiteral()});
+        try self.name.write(out);
+        try out.writeAll(" = ");
+        if (self.value) |v| try v.write(out);
+        try out.writeByte(';');
     }
 };
 
@@ -69,10 +101,31 @@ pub const ReturnStatement = struct {
     const Self = @This();
 
     token: token.Token,
-    return_value: Expression = undefined,
+    return_value: ?Expression = null,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        try out.print("{s} ", .{self.tokenLiteral()});
+        if (self.return_value) |v| try v.write(out);
+        try out.writeByte(';');
+    }
+};
+
+pub const ExpressionStatement = struct {
+    const Self = @This();
+
+    token: token.Token,
+    expression: ?Expression = null,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        if (self.expression) |e| try e.write(out);
     }
 };
 
@@ -85,4 +138,28 @@ pub const Identifier = struct {
     pub fn tokenLiteral(self: Self) []const u8 {
         return self.token.literal;
     }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        try out.writeAll(self.value);
+    }
 };
+
+test "write" {
+    var program = Program{};
+    defer program.statements.deinit(testing.allocator);
+
+    var buf: [64]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+
+    try program.statements.append(testing.allocator, .{ .let_statement = .{ .token = .{ .kind = .let, .literal = "let" }, .name = .{
+        .token = .{ .kind = .ident, .literal = "myVar" },
+        .value = "myVar",
+    }, .value = .{ .identifier_expression = .{
+        .token = .{ .kind = .ident, .literal = "anotherVar" },
+        .value = "anotherVar",
+    } } } });
+
+    try program.write(&w);
+
+    try testing.expectEqualStrings("let myVar = anotherVar;", w.buffered());
+}

@@ -5,20 +5,40 @@ const ast = @import("ast.zig");
 const Lexer = @import("lexer.zig");
 const token = @import("token.zig");
 
+const PrefixParseFn = *const fn (*Self) ast.Expression;
+const InfixParseFn = *const fn (*Self, *ast.Expression) ast.Expression;
+
+const Precedence = enum(u8) {
+    lowest = 1,
+    equals,
+    less_greater,
+    sum,
+    product,
+    prefix,
+    call,
+};
+
 const Self = @This();
 
 allocator: std.mem.Allocator,
 lexer: Lexer,
 
+prefix_parse_fns: std.AutoHashMap(token.TokenKind, PrefixParseFn),
+infix_parse_fns: std.AutoHashMap(token.TokenKind, InfixParseFn),
+
 current_token: token.Token = undefined,
 errors_: std.ArrayList([]const u8) = .empty,
 peek_token: token.Token = undefined,
 
-pub fn init(allocator: std.mem.Allocator, lexer: Lexer) Self {
+pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     var parser = Self{
         .allocator = allocator,
         .lexer = lexer,
+        .prefix_parse_fns = std.AutoHashMap(token.TokenKind, PrefixParseFn).init(allocator),
+        .infix_parse_fns = std.AutoHashMap(token.TokenKind, InfixParseFn).init(allocator),
     };
+
+    try parser.registerPrefix(.ident, Self.parseIdentifier);
 
     parser.nextToken();
     parser.nextToken();
@@ -29,6 +49,8 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) Self {
 pub fn deinit(self: *Self) void {
     for (self.errors_.items) |msg| self.allocator.free(msg);
     self.errors_.deinit(self.allocator);
+    self.prefix_parse_fns.deinit();
+    self.infix_parse_fns.deinit();
 }
 
 pub fn parseProgram(self: *Self) !?ast.Program {
@@ -65,7 +87,11 @@ fn parseStatement(self: *Self) !?ast.Statement {
 
             return .{ .return_statement = ret };
         },
-        else => return null,
+        else => {
+            const exp = try self.parseExpressionStatement() orelse return null;
+
+            return .{ .expression_statement = exp };
+        },
     }
 }
 
@@ -96,6 +122,34 @@ fn parseReturnStatement(self: *Self) !?ast.ReturnStatement {
     while (!self.currentTokenIs(.semicolon)) self.nextToken();
 
     return statement;
+}
+
+fn parseExpressionStatement(self: *Self) !?ast.ExpressionStatement {
+    var statement = ast.ExpressionStatement{
+        .token = self.current_token,
+    };
+
+    statement.expression = self.parseExpression(.lowest);
+
+    if (self.peekTokenIs(.semicolon)) self.nextToken();
+
+    return statement;
+}
+
+fn parseExpression(self: *Self, precedence: Precedence) ?ast.Expression {
+    _ = precedence;
+    const prefix = self.prefix_parse_fns.get(self.current_token.kind) orelse return null;
+
+    const leftExp = prefix(self);
+
+    return leftExp;
+}
+
+fn parseIdentifier(self: *const Self) ast.Expression {
+    return .{ .identifier_expression = .{
+        .token = self.current_token,
+        .value = self.current_token.literal,
+    } };
 }
 
 fn currentTokenIs(self: *const Self, kind: token.TokenKind) bool {
@@ -130,6 +184,26 @@ fn peekError(self: *Self, kind: token.TokenKind) !void {
     });
 
     try self.errors_.append(self.allocator, msg);
+}
+
+fn registerPrefix(self: *Self, kind: token.TokenKind, func: PrefixParseFn) !void {
+    try self.prefix_parse_fns.put(kind, func);
+}
+
+fn registerInfix(self: *Self, kind: token.TokenKind, func: InfixParseFn) !void {
+    try self.infix_parse_fns.put(kind, func);
+}
+
+fn getPrecedence(t: token.TokenType) Precedence {
+    return switch (t) {
+        .eq, .not_eq => .equals,
+        .lt, .gt => .less_greater,
+        .plus, .minus => .sum,
+        .asterisk, .slash => .product,
+        .lparen => .call,
+        .lbracket => .index,
+        else => .lowest,
+    };
 }
 
 test "let statements" {
@@ -190,9 +264,42 @@ test "return statements" {
     }
 }
 
+test "identifier expressions" {
+    const input = "foobar;";
+
+    var program = try parseAndCheckProgram(input);
+    defer program.statements.deinit(testing.allocator);
+
+    if (program.statements.items.len != 1) {
+        std.debug.print("parseProgram returned null\n", .{});
+        return error.NumProgramStatements;
+    }
+
+    const statement = program.statements.items[0];
+
+    const expr_stmt = switch (statement) {
+        .expression_statement => |es| es,
+        else => {
+            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
+    };
+
+    const ident = switch (expr_stmt.expression.?) {
+        .identifier_expression => |ie| ie,
+        // else => {
+        //     std.debug.print("stmt not ast.Identifier. got={s}\n", .{@tagName(expr_stmt)});
+        //     return error.WrongStatementType;
+        // },
+    };
+
+    try testing.expectEqualStrings("foobar", ident.value);
+    try testing.expectEqualStrings("foobar", ident.tokenLiteral());
+}
+
 fn parseAndCheckProgram(input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
-    var parser = init(testing.allocator, lexer);
+    var parser = try init(testing.allocator, lexer);
     defer parser.deinit();
 
     const program = try parser.parseProgram() orelse {
