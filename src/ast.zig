@@ -47,6 +47,7 @@ pub const Expression = union(enum) {
     const Self = @This();
 
     identifier_expression: Identifier,
+    integer_literal: IntegerLiteral,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
@@ -141,6 +142,21 @@ pub const Identifier = struct {
 
     pub fn write(self: Self, out: *std.Io.Writer) !void {
         try out.writeAll(self.value);
+    }
+};
+
+pub const IntegerLiteral = struct {
+    const Self = @This();
+
+    token: token.Token,
+    value: i64 = 0,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) !void {
+        try out.print("{d}", .{self.value});
     }
 };
 

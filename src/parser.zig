@@ -5,7 +5,7 @@ const ast = @import("ast.zig");
 const Lexer = @import("lexer.zig");
 const token = @import("token.zig");
 
-const PrefixParseFn = *const fn (*Self) ast.Expression;
+const PrefixParseFn = *const fn (*Self) anyerror!?ast.Expression;
 const InfixParseFn = *const fn (*Self, *ast.Expression) ast.Expression;
 
 const Precedence = enum(u8) {
@@ -39,6 +39,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     };
 
     try parser.registerPrefix(.ident, Self.parseIdentifier);
+    try parser.registerPrefix(.int, Self.parseIntegerLiteral);
 
     parser.nextToken();
     parser.nextToken();
@@ -129,27 +130,47 @@ fn parseExpressionStatement(self: *Self) !?ast.ExpressionStatement {
         .token = self.current_token,
     };
 
-    statement.expression = self.parseExpression(.lowest);
+    statement.expression = try self.parseExpression(.lowest) orelse return null;
 
     if (self.peekTokenIs(.semicolon)) self.nextToken();
 
     return statement;
 }
 
-fn parseExpression(self: *Self, precedence: Precedence) ?ast.Expression {
+fn parseExpression(self: *Self, precedence: Precedence) !?ast.Expression {
     _ = precedence;
     const prefix = self.prefix_parse_fns.get(self.current_token.kind) orelse return null;
 
-    const leftExp = prefix(self);
+    const leftExp = (try prefix(self)) orelse return null;
 
     return leftExp;
 }
 
-fn parseIdentifier(self: *const Self) ast.Expression {
+fn parseIdentifier(self: *const Self) !?ast.Expression {
     return .{ .identifier_expression = .{
         .token = self.current_token,
         .value = self.current_token.literal,
     } };
+}
+
+fn parseIntegerLiteral(self: *Self) !?ast.Expression {
+    var literal = ast.IntegerLiteral{
+        .token = self.current_token,
+    };
+
+    const value = std.fmt.parseInt(i64, self.current_token.literal, 0) catch {
+        const msg = try std.fmt.allocPrint(self.allocator, "could not parse {s} as integer.", .{self.current_token.literal});
+
+        try self.errors_.append(self.allocator, msg);
+
+        return null;
+    };
+
+    literal.value = value;
+
+    return .{
+        .integer_literal = literal,
+    };
 }
 
 fn currentTokenIs(self: *const Self, kind: token.TokenKind) bool {
@@ -287,14 +308,47 @@ test "identifier expressions" {
 
     const ident = switch (expr_stmt.expression.?) {
         .identifier_expression => |ie| ie,
-        // else => {
-        //     std.debug.print("stmt not ast.Identifier. got={s}\n", .{@tagName(expr_stmt)});
-        //     return error.WrongStatementType;
-        // },
+        else => {
+            std.debug.print("stmt not ast.Identifier. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
     };
 
     try testing.expectEqualStrings("foobar", ident.value);
     try testing.expectEqualStrings("foobar", ident.tokenLiteral());
+}
+
+test "integer literal expressions" {
+    const input = "5;";
+
+    var program = try parseAndCheckProgram(input);
+    defer program.statements.deinit(testing.allocator);
+
+    if (program.statements.items.len != 1) {
+        std.debug.print("parseProgram returned null\n", .{});
+        return error.NumProgramStatements;
+    }
+
+    const statement = program.statements.items[0];
+
+    const expr_stmt = switch (statement) {
+        .expression_statement => |es| es,
+        else => {
+            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
+    };
+
+    const literal = switch (expr_stmt.expression.?) {
+        .integer_literal => |il| il,
+        else => {
+            std.debug.print("stmt not IntegerLiteral. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqual(5, literal.value);
+    try testing.expectEqualStrings("5", literal.tokenLiteral());
 }
 
 fn parseAndCheckProgram(input: []const u8) !ast.Program {
