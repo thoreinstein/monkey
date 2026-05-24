@@ -1,21 +1,16 @@
 const std = @import("std");
-const Io = std.Io;
+const io = std.Io;
+
+const repl = @import("repl.zig");
 
 pub fn main(init: std.process.Init) !void {
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    var out_buf: [4096]u8 = undefined;
+    var out_w = io.File.stdout().writer(init.io, &out_buf);
+    const out = &out_w.interface;
 
-    const arena: std.mem.Allocator = init.arena.allocator();
+    var in_buf: [4096]u8 = undefined;
+    var in_r = io.File.stdin().reader(init.io, &in_buf);
+    const in = &in_r.interface;
 
-    const args = try init.minimal.args.toSlice(arena);
-    for (args) |arg| {
-        std.log.info("arg: {s}", .{arg});
-    }
-
-    const io = init.io;
-
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-    const stdout_writer = &stdout_file_writer.interface;
-
-    try stdout_writer.flush();
+    try repl.start(in, out);
 }
