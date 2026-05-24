@@ -16,7 +16,7 @@ pub const Node = union(enum) {
         };
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         return switch (self) {
             inline else => |n| n.write(out),
         };
@@ -36,7 +36,7 @@ pub const Statement = union(enum) {
         };
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         return switch (self) {
             inline else => |s| s.write(out),
         };
@@ -47,6 +47,8 @@ pub const Expression = union(enum) {
     const Self = @This();
 
     identifier_expression: Identifier,
+    prefix_expression: PrefixExpression,
+
     integer_literal: IntegerLiteral,
 
     pub fn tokenLiteral(self: Self) []const u8 {
@@ -55,7 +57,7 @@ pub const Expression = union(enum) {
         };
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         return switch (self) {
             inline else => |e| e.write(out),
         };
@@ -73,7 +75,7 @@ pub const Program = struct {
         return "";
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         for (self.statements.items) |s| try s.write(out);
     }
 };
@@ -89,7 +91,7 @@ pub const LetStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         try out.print("{s} ", .{self.tokenLiteral()});
         try self.name.write(out);
         try out.writeAll(" = ");
@@ -108,7 +110,7 @@ pub const ReturnStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         try out.print("{s} ", .{self.tokenLiteral()});
         if (self.return_value) |v| try v.write(out);
         try out.writeByte(';');
@@ -119,13 +121,13 @@ pub const ExpressionStatement = struct {
     const Self = @This();
 
     token: token.Token,
-    expression: ?Expression = null,
+    expression: ?*Expression = null,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.expression) |e| try e.write(out);
     }
 };
@@ -140,7 +142,7 @@ pub const Identifier = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         try out.writeAll(self.value);
     }
 };
@@ -155,8 +157,27 @@ pub const IntegerLiteral = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: Self, out: *std.Io.Writer) !void {
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         try out.print("{d}", .{self.value});
+    }
+};
+
+pub const PrefixExpression = struct {
+    const Self = @This();
+
+    token: token.Token,
+    operator: []const u8,
+    right: ?*Expression = null,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.writeByte('(');
+        try out.writeAll(self.operator);
+        if (self.right) |r| try r.write(out);
+        try out.writeByte(')');
     }
 };
 

@@ -6,7 +6,7 @@ const Lexer = @import("lexer.zig");
 const token = @import("token.zig");
 
 const PrefixParseFn = *const fn (*Self) anyerror!?ast.Expression;
-const InfixParseFn = *const fn (*Self, *ast.Expression) ast.Expression;
+const InfixParseFn = *const fn (*Self, *ast.Expression) anyerror!?ast.Expression;
 
 const Precedence = enum(u8) {
     lowest = 1,
@@ -40,6 +40,8 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
 
     try parser.registerPrefix(.ident, Self.parseIdentifier);
     try parser.registerPrefix(.int, Self.parseIntegerLiteral);
+    try parser.registerPrefix(.bang, Self.parsePrefixExpression);
+    try parser.registerPrefix(.minus, Self.parsePrefixExpression);
 
     parser.nextToken();
     parser.nextToken();
@@ -137,13 +139,35 @@ fn parseExpressionStatement(self: *Self) !?ast.ExpressionStatement {
     return statement;
 }
 
-fn parseExpression(self: *Self, precedence: Precedence) !?ast.Expression {
+fn parseExpression(self: *Self, precedence: Precedence) !?*ast.Expression {
     _ = precedence;
-    const prefix = self.prefix_parse_fns.get(self.current_token.kind) orelse return null;
+    const prefix = self.prefix_parse_fns.get(self.current_token.kind) orelse {
+        try self.noPrefixParseFnError(self.current_token.kind);
+
+        return null;
+    };
 
     const leftExp = (try prefix(self)) orelse return null;
 
-    return leftExp;
+    const new_exp = try self.allocator.create(ast.Expression);
+    new_exp.* = leftExp;
+
+    return new_exp;
+}
+
+fn parsePrefixExpression(self: *Self) !?ast.Expression {
+    var expression = ast.PrefixExpression{
+        .token = self.current_token,
+        .operator = self.current_token.literal,
+    };
+
+    self.nextToken();
+
+    expression.right = (try self.parseExpression(.prefix)) orelse return null;
+
+    return .{
+        .prefix_expression = expression,
+    };
 }
 
 fn parseIdentifier(self: *const Self) !?ast.Expression {
@@ -215,6 +239,14 @@ fn registerInfix(self: *Self, kind: token.TokenKind, func: InfixParseFn) !void {
     try self.infix_parse_fns.put(kind, func);
 }
 
+fn noPrefixParseFnError(self: *Self, kind: token.TokenKind) !void {
+    const msg = try std.fmt.allocPrint(self.allocator, "no prefix parse function for {s} found", .{
+        @tagName(kind),
+    });
+
+    try self.errors_.append(self.allocator, msg);
+}
+
 fn getPrecedence(t: token.TokenType) Precedence {
     return switch (t) {
         .eq, .not_eq => .equals,
@@ -228,14 +260,17 @@ fn getPrecedence(t: token.TokenType) Precedence {
 }
 
 test "let statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     const input =
         \\let x = 5;
         \\let y = 10;
         \\let foobar = 838383;
     ;
 
-    var program = try parseAndCheckProgram(input);
-    defer program.statements.deinit(testing.allocator);
+    const program = try parseAndCheckProgram(allocator, input);
 
     if (program.statements.items.len != 3) {
         std.debug.print("parseProgram returned null\n", .{});
@@ -258,14 +293,17 @@ test "let statements" {
 }
 
 test "return statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     const input =
         \\return 5;
         \\return 10;
         \\return 993322;
     ;
 
-    var program = try parseAndCheckProgram(input);
-    defer program.statements.deinit(testing.allocator);
+    const program = try parseAndCheckProgram(allocator, input);
 
     if (program.statements.items.len != 3) {
         std.debug.print("parseProgram returned null\n", .{});
@@ -286,10 +324,13 @@ test "return statements" {
 }
 
 test "identifier expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     const input = "foobar;";
 
-    var program = try parseAndCheckProgram(input);
-    defer program.statements.deinit(testing.allocator);
+    const program = try parseAndCheckProgram(allocator, input);
 
     if (program.statements.items.len != 1) {
         std.debug.print("parseProgram returned null\n", .{});
@@ -306,7 +347,7 @@ test "identifier expressions" {
         },
     };
 
-    const ident = switch (expr_stmt.expression.?) {
+    const ident = switch (expr_stmt.expression.?.*) {
         .identifier_expression => |ie| ie,
         else => {
             std.debug.print("stmt not ast.Identifier. got={s}\n", .{@tagName(statement)});
@@ -319,10 +360,13 @@ test "identifier expressions" {
 }
 
 test "integer literal expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     const input = "5;";
 
-    var program = try parseAndCheckProgram(input);
-    defer program.statements.deinit(testing.allocator);
+    const program = try parseAndCheckProgram(allocator, input);
 
     if (program.statements.items.len != 1) {
         std.debug.print("parseProgram returned null\n", .{});
@@ -339,7 +383,7 @@ test "integer literal expressions" {
         },
     };
 
-    const literal = switch (expr_stmt.expression.?) {
+    const literal = switch (expr_stmt.expression.?.*) {
         .integer_literal => |il| il,
         else => {
             std.debug.print("stmt not IntegerLiteral. got={s}\n", .{@tagName(statement)});
@@ -351,9 +395,55 @@ test "integer literal expressions" {
     try testing.expectEqualStrings("5", literal.tokenLiteral());
 }
 
-fn parseAndCheckProgram(input: []const u8) !ast.Program {
+test "parsing prefix expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const tests = [_]struct {
+        input: []const u8,
+        operator: []const u8,
+        integer_value: i64,
+    }{
+        .{ .input = "!5", .operator = "!", .integer_value = 5 },
+        .{ .input = "-15", .operator = "-", .integer_value = 15 },
+    };
+
+    for (tests) |t| {
+        const program = try parseAndCheckProgram(allocator, t.input);
+
+        if (program.statements.items.len != 1) {
+            std.debug.print("parseProgram returned null\n", .{});
+            return error.NumProgramStatements;
+        }
+
+        const statement = program.statements.items[0];
+
+        const expr_stmt = switch (statement) {
+            .expression_statement => |es| es,
+            else => {
+                std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+                return error.WrongStatementType;
+            },
+        };
+
+        const exp = switch (expr_stmt.expression.?.*) {
+            .prefix_expression => |pe| pe,
+            else => {
+                std.debug.print("stmt not PrefixExpression. got={s}\n", .{@tagName(statement)});
+                return error.WrongStatementType;
+            },
+        };
+
+        try testing.expectEqualStrings(t.operator, exp.operator);
+
+        try testIntegerLiteral(exp.right.?, t.integer_value);
+    }
+}
+
+fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
-    var parser = try init(testing.allocator, lexer);
+    var parser = try init(allocator, lexer);
     defer parser.deinit();
 
     const program = try parser.parseProgram() orelse {
@@ -381,7 +471,19 @@ fn testLetStatement(statement: ast.Statement, name: []const u8) !void {
     try testing.expectEqualStrings(name, let_stmt.name.tokenLiteral());
 }
 
+fn testIntegerLiteral(exp: *ast.Expression, value: i64) !void {
+    const literal = switch (exp.*) {
+        .integer_literal => |il| il,
+        else => {
+            std.debug.print("stmt not IntegerLiteral. got={s}\n", .{@tagName(exp.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqual(value, literal.value);
+}
+
 fn checkParserErrors(parser: Self) !void {
-    for (parser.errors_.items) |err| std.debug.print("{s}", .{err});
+    for (parser.errors_.items) |err| std.debug.print("{s}\n", .{err});
     try testing.expectEqual(@as(usize, 0), parser.errors_.items.len);
 }
