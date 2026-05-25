@@ -12,5 +12,5 @@ pub fn main(init: std.process.Init) !void {
     var in_r = io.File.stdin().reader(init.io, &in_buf);
     const in = &in_r.interface;
 
-    try repl.start(in, out);
+    _ = try repl.start(init.gpa, in, out);
 }

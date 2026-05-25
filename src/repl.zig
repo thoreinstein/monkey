@@ -2,10 +2,11 @@ const std = @import("std");
 const io = std.Io;
 
 const Lexer = @import("lexer.zig");
+const Parser = @import("parser.zig");
 
 const PROMPT = ">> ";
 
-pub fn start(in: *io.Reader, out: *io.Writer) !void {
+pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?void {
     while (true) {
         try out.writeAll(PROMPT);
         try out.flush();
@@ -17,15 +18,19 @@ pub fn start(in: *io.Reader, out: *io.Writer) !void {
 
         in.toss(1);
 
-        var lexer = Lexer.init(line);
+        const lexer = Lexer.init(line);
+        var parser = try Parser.init(allocator, lexer);
 
-        while (true) {
-            const tok = lexer.nextToken();
+        const program = try parser.parseProgram() orelse return null;
 
-            if (tok.kind == .eof) break;
-
-            try out.print("{any}\n", .{tok});
+        if (parser.errors_.items.len != 0) {
+            for (parser.errors().items) |msg| try out.print("\t{s}\n", .{msg});
+            try out.flush();
+            continue;
         }
+
+        try program.write(out);
+        try out.writeAll("\n");
 
         try out.flush();
     }
