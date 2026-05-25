@@ -56,6 +56,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerInfix(.not_eq, Self.parseInfixExpression);
     try parser.registerInfix(.lt, Self.parseInfixExpression);
     try parser.registerInfix(.gt, Self.parseInfixExpression);
+    try parser.registerInfix(.lparen, Self.parseCallExpression);
 
     parser.nextToken();
     parser.nextToken();
@@ -225,6 +226,47 @@ fn parseInfixExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
     return .{
         .infix_expression = expression,
     };
+}
+
+fn parseCallExpression(self: *Self, function: *ast.Expression) !?ast.Expression {
+    var expression = ast.CallExpression{
+        .token = self.current_token,
+        .function = function,
+    };
+
+    const args = try self.parseCallArguments() orelse return null;
+
+    expression.arguments = args;
+
+    return .{
+        .call_expression = expression,
+    };
+}
+
+fn parseCallArguments(self: *Self) !?std.ArrayList(*ast.Expression) {
+    var args = std.ArrayList(*ast.Expression).empty;
+
+    if (self.peekTokenIs(.rparen)) {
+        self.nextToken();
+
+        return args;
+    }
+
+    self.nextToken();
+
+    const arg = try self.parseExpression(.lowest) orelse return null;
+    try args.append(self.allocator, arg);
+
+    while (self.peekTokenIs(.comma)) {
+        self.nextToken();
+        self.nextToken();
+        const a = try self.parseExpression(.lowest) orelse return null;
+        try args.append(self.allocator, a);
+    }
+
+    if (!(try self.expectPeek(.rparen))) return null;
+
+    return args;
 }
 
 fn parseIdentifier(self: *const Self) !?*ast.Expression {
@@ -789,6 +831,33 @@ test "function parameters" {
     }
 }
 
+test "call expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const input = "add(1, 2 * 3, 4 + 5);";
+
+    const program = try parseAndCheckProgram(allocator, input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const call_exp = switch (expr_stmt.expression.?.*) {
+        .call_expression => |ce| ce,
+        else => {
+            std.debug.print("stmt not CallExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqualStrings("add", call_exp.function.?.tokenLiteral());
+    try testing.expectEqual(@as(usize, 3), call_exp.arguments.items.len);
+
+    try testLiteralExpression(call_exp.arguments.items[0], .{ .int = 1 });
+    try testInfixExpression(call_exp.arguments.items[1], .{ .int = 2 }, "*", .{ .int = 3 });
+    try testInfixExpression(call_exp.arguments.items[2], .{ .int = 4 }, "+", .{ .int = 5 });
+}
+
 test "operator precedence" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -820,6 +889,9 @@ test "operator precedence" {
         .{ .input = "2 / (5 + 5)", .expected = "(2 / (5 + 5))", .size = 1 },
         .{ .input = "-(5 + 5)", .expected = "(-(5 + 5))", .size = 1 },
         .{ .input = "!(true == true)", .expected = "(!(true == true))", .size = 1 },
+        .{ .input = "a + add(b * c) + d", .expected = "((a + add((b * c))) + d)", .size = 1 },
+        .{ .input = "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", .expected = "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))", .size = 1 },
+        .{ .input = "add(a + b + c * d / f + g)", .expected = "add((((a + b) + ((c * d) / f)) + g))", .size = 1 },
     };
 
     for (tests) |t| {

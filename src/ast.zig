@@ -50,12 +50,13 @@ pub const Expression = union(enum) {
     identifier_expression: Identifier,
     boolean_expression: BooleanExpression,
     if_expression: IfExpression,
-    function_literal: FunctionLiteral,
+    call_expression: CallExpression,
 
     prefix_expression: PrefixExpression,
     infix_expression: InfixExpression,
 
     integer_literal: IntegerLiteral,
+    function_literal: FunctionLiteral,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
@@ -282,6 +283,28 @@ pub const FunctionLiteral = struct {
         }
         try out.writeByte(')');
         if (self.body) |b| try b.write(out);
+    }
+};
+
+pub const CallExpression = struct {
+    const Self = @This();
+
+    token: token.Token,
+    function: ?*Expression = null,
+    arguments: std.ArrayList(*Expression) = .empty,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try self.function.?.write(out);
+        try out.writeByte('(');
+        for (self.arguments.items, 0..) |p, i| {
+            if (i != 0) try out.writeAll(", ");
+            try p.write(out);
+        }
+        try out.writeByte(')');
     }
 };
 
