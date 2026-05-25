@@ -29,6 +29,7 @@ pub const Statement = union(enum) {
     let_statement: LetStatement,
     return_statement: ReturnStatement,
     expression_statement: ExpressionStatement,
+    block_statement: BlockStatement,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
@@ -48,6 +49,7 @@ pub const Expression = union(enum) {
 
     identifier_expression: Identifier,
     boolean_expression: BooleanExpression,
+    if_expression: IfExpression,
 
     prefix_expression: PrefixExpression,
     infix_expression: InfixExpression,
@@ -217,6 +219,45 @@ pub const BooleanExpression = struct {
 
     pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         try out.print("{}", .{self.value});
+    }
+};
+
+pub const IfExpression = struct {
+    const Self = @This();
+
+    token: token.Token,
+    condition: ?*Expression = null,
+    consequence: ?BlockStatement = null,
+    alternative: ?BlockStatement = null,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.writeAll("if");
+        if (self.condition) |c| try c.write(out);
+        try out.writeAll(" ");
+        if (self.consequence) |c| try c.write(out);
+        if (self.alternative) |a| {
+            try out.writeAll("else ");
+            try a.write(out);
+        }
+    }
+};
+
+pub const BlockStatement = struct {
+    const Self = @This();
+
+    token: token.Token,
+    statements: std.ArrayList(Statement) = .empty,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        for (self.statements.items) |s| try s.write(out);
     }
 };
 

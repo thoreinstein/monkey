@@ -45,6 +45,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerPrefix(.true_, Self.parseBoolean);
     try parser.registerPrefix(.false_, Self.parseBoolean);
     try parser.registerPrefix(.lparen, Self.parseGroupedExpression);
+    try parser.registerPrefix(.if_, Self.parseIfExpression);
 
     try parser.registerInfix(.plus, Self.parseInfixExpression);
     try parser.registerInfix(.minus, Self.parseInfixExpression);
@@ -149,6 +150,20 @@ fn parseExpressionStatement(self: *Self) !?ast.ExpressionStatement {
     if (self.peekTokenIs(.semicolon)) self.nextToken();
 
     return statement;
+}
+
+fn parseBlockStatement(self: *Self) !?ast.BlockStatement {
+    var block = ast.BlockStatement{ .token = self.current_token };
+
+    self.nextToken();
+
+    while (!self.currentTokenIs(.rbrace) and !self.currentTokenIs(.eof)) {
+        const statement = try self.parseStatement();
+        if (statement) |s| try block.statements.append(self.allocator, s);
+        self.nextToken();
+    }
+
+    return block;
 }
 
 fn parseExpression(self: *Self, precedence: Precedence) !?*ast.Expression {
@@ -265,6 +280,39 @@ fn parseGroupedExpression(self: *Self) !?*ast.Expression {
     if (!(try self.expectPeek(.rparen))) return null;
 
     return exp;
+}
+
+fn parseIfExpression(self: *Self) !?*ast.Expression {
+    var expression = ast.IfExpression{
+        .token = self.current_token,
+    };
+
+    if (!(try self.expectPeek(.lparen))) return null;
+
+    self.nextToken();
+
+    expression.condition = try self.parseExpression(.lowest);
+
+    if (!(try self.expectPeek(.rparen))) return null;
+    if (!(try self.expectPeek(.lbrace))) return null;
+
+    expression.consequence = try self.parseBlockStatement();
+
+    if (self.peekTokenIs(.else_)) {
+        self.nextToken();
+
+        if (!(try self.expectPeek(.lbrace))) return null;
+
+        expression.alternative = try self.parseBlockStatement();
+    }
+
+    const new = try self.allocator.create(ast.Expression);
+
+    new.* = .{
+        .if_expression = expression,
+    };
+
+    return new;
 }
 
 fn currentTokenIs(self: *const Self, kind: token.TokenKind) bool {
@@ -616,6 +664,109 @@ test "parsing infix expressions" {
 
         try testInfixExpression(expr_stmt.expression.?, t.left_value, t.operator, t.right_value);
     }
+}
+
+test "if expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const input = "if (x < y) { x }";
+
+    const program = try parseAndCheckProgram(allocator, input);
+
+    if (program.statements.items.len != 1) {
+        std.debug.print("parseProgram returned null\n", .{});
+        return error.NumProgramStatements;
+    }
+
+    const statement = program.statements.items[0];
+
+    const expr_stmt = switch (statement) {
+        .expression_statement => |es| es,
+        else => {
+            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
+    };
+
+    const if_exp = switch (expr_stmt.expression.?.*) {
+        .if_expression => |ie| ie,
+        else => {
+            std.debug.print("stmt not IfExpression. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testInfixExpression(if_exp.condition.?, .{ .ident = "x" }, "<", .{ .ident = "y" });
+
+    try testing.expectEqual(@as(usize, 1), if_exp.consequence.?.statements.items.len);
+    try testing.expectEqual(null, if_exp.alternative);
+
+    const consequence = switch (if_exp.consequence.?.statements.items[0]) {
+        .expression_statement => |es| es,
+        else => {
+            std.debug.print("consequence not ExpressionStatement. got={s}\n", .{@tagName(if_exp.consequence.?.statements.items[0])});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testIdentifier(consequence.expression.?, "x");
+}
+
+test "if else expression" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const input = "if (x < y) { x } else { y }";
+
+    const program = try parseAndCheckProgram(allocator, input);
+
+    if (program.statements.items.len != 1) {
+        std.debug.print("parseProgram returned null\n", .{});
+        return error.NumProgramStatements;
+    }
+
+    const statement = program.statements.items[0];
+
+    const expr_stmt = switch (statement) {
+        .expression_statement => |s| s,
+        else => {
+            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
+    };
+
+    const exp = switch (expr_stmt.expression.?.*) {
+        .if_expression => |p| p,
+        else => {
+            std.debug.print("stmt not IfExpression. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqual(1, exp.consequence.?.statements.items.len);
+    try testing.expectEqual(1, exp.alternative.?.statements.items.len);
+    try testInfixExpression(exp.condition.?, .{ .ident = "x" }, "<", .{ .ident = "y" });
+
+    const consequence_stmt = switch (exp.consequence.?.statements.items[0]) {
+        .expression_statement => |s| s,
+        else => {
+            std.debug.print("consequence stmt not ExpressionStatement. got={s}\n", .{@tagName(exp.consequence.?.statements.items[0])});
+            return error.WrongStatementType;
+        },
+    };
+    try testIdentifier(consequence_stmt.expression.?, "x");
+
+    const alternative_stmt = switch (exp.alternative.?.statements.items[0]) {
+        .expression_statement => |s| s,
+        else => {
+            std.debug.print("alternative stmt not ExpressionStatement. got={s}\n", .{@tagName(exp.alternative.?.statements.items[0])});
+            return error.WrongStatementType;
+        },
+    };
+    try testIdentifier(alternative_stmt.expression.?, "y");
 }
 
 test "operator precedence" {
