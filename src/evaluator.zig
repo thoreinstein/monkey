@@ -56,6 +56,9 @@ fn evalInfixExpression(operator: []const u8, left: object.Object, right: object.
         return evalIntegerIntegerInfixExpression(operator, left, right);
     }
 
+    if (std.mem.eql(u8, "==", operator)) return .{ .boolean = .{ .value = std.meta.eql(left, right) } };
+    if (std.mem.eql(u8, "!=", operator)) return .{ .boolean = .{ .value = !std.meta.eql(left, right) } };
+
     return .{ .null_ = .{} };
 }
 
@@ -114,8 +117,10 @@ test "integer expressions" {
         .{ .input = "(5 + 10 * 2 + 15 / 3) * 2 + -10", .expected = 50 },
     };
 
-    for (tests) |t| {
+    for (tests, 0..) |t, i| {
         const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+
+        errdefer std.debug.print("test {d} failed\n", .{i});
 
         try testIntegerObject(evaluated, t.expected);
     }
@@ -139,10 +144,20 @@ test "boolean expressions" {
         .{ .input = "1 != 1", .expected = false },
         .{ .input = "1 == 2", .expected = false },
         .{ .input = "1 != 2", .expected = true },
+        .{ .input = "true == true", .expected = true },
+        .{ .input = "false == false", .expected = true },
+        .{ .input = "true != false", .expected = true },
+        .{ .input = "false != true", .expected = true },
+        .{ .input = "(1 < 2) == true", .expected = true },
+        .{ .input = "(1 < 2) == false", .expected = false },
+        .{ .input = "(1 > 2) == true", .expected = false },
+        .{ .input = "(1 > 2) == false", .expected = true },
     };
 
-    for (tests) |t| {
+    for (tests, 0..) |t, i| {
         const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+
+        errdefer std.debug.print("test {d} failed\n", .{i});
 
         try testBooleanObject(evaluated, t.expected);
     }
