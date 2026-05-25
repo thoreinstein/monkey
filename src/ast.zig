@@ -50,6 +50,7 @@ pub const Expression = union(enum) {
     identifier_expression: Identifier,
     boolean_expression: BooleanExpression,
     if_expression: IfExpression,
+    function_literal: FunctionLiteral,
 
     prefix_expression: PrefixExpression,
     infix_expression: InfixExpression,
@@ -258,6 +259,29 @@ pub const BlockStatement = struct {
 
     pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         for (self.statements.items) |s| try s.write(out);
+    }
+};
+
+pub const FunctionLiteral = struct {
+    const Self = @This();
+
+    token: token.Token,
+    parameters: std.ArrayList(Identifier) = .empty,
+    body: ?BlockStatement = null,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.writeAll(self.tokenLiteral());
+        try out.writeByte('(');
+        for (self.parameters.items, 0..) |p, i| {
+            if (i != 0) try out.writeAll(", ");
+            try p.write(out);
+        }
+        try out.writeByte(')');
+        if (self.body) |b| try b.write(out);
     }
 };
 
