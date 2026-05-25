@@ -42,6 +42,8 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerPrefix(.int, Self.parseIntegerLiteral);
     try parser.registerPrefix(.bang, Self.parsePrefixExpression);
     try parser.registerPrefix(.minus, Self.parsePrefixExpression);
+    try parser.registerPrefix(.true_, Self.parseBoolean);
+    try parser.registerPrefix(.false_, Self.parseBoolean);
 
     try parser.registerInfix(.plus, Self.parseInfixExpression);
     try parser.registerInfix(.minus, Self.parseInfixExpression);
@@ -231,6 +233,13 @@ fn parseIntegerLiteral(self: *Self) !?ast.Expression {
     };
 }
 
+fn parseBoolean(self: *Self) !?ast.Expression {
+    return .{ .boolean_expression = .{
+        .token = self.current_token,
+        .value = self.currentTokenIs(.true_),
+    } };
+}
+
 fn currentTokenIs(self: *const Self, kind: token.TokenKind) bool {
     return self.current_token.kind == kind;
 }
@@ -299,6 +308,12 @@ fn getPrecedence(t: token.TokenKind) Precedence {
         else => .lowest,
     };
 }
+
+const Expected = union(enum) {
+    int: i64,
+    ident: []const u8,
+    boolean: bool,
+};
 
 test "let statements" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -436,6 +451,52 @@ test "integer literal expressions" {
     try testing.expectEqualStrings("5", literal.tokenLiteral());
 }
 
+test "boolean expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: bool,
+    }{
+        .{ .input = "true", .expected = true },
+        .{ .input = "false", .expected = false },
+    };
+
+    for (tests) |t| {
+        const program = try parseAndCheckProgram(allocator, t.input);
+
+        if (program.statements.items.len != 1) {
+            std.debug.print("parseProgram returned null\n", .{});
+            return error.NumProgramStatements;
+        }
+
+        const statement = program.statements.items[0];
+
+        const expr_stmt = switch (statement) {
+            .expression_statement => |es| es,
+            else => {
+                std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+                return error.WrongStatementType;
+            },
+        };
+
+        const boolean = switch (expr_stmt.expression.?.*) {
+            .boolean_expression => |be| be,
+            else => {
+                std.debug.print("stmt not PrefixExpression. got={s}\n", .{@tagName(statement)});
+                return error.WrongStatementType;
+            },
+        };
+
+        const expected_literal = if (t.expected) "true" else "false";
+
+        try testing.expectEqual(t.expected, boolean.value);
+        try testing.expectEqualStrings(expected_literal, boolean.tokenLiteral());
+    }
+}
+
 test "parsing prefix expressions" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -444,10 +505,12 @@ test "parsing prefix expressions" {
     const tests = [_]struct {
         input: []const u8,
         operator: []const u8,
-        integer_value: i64,
+        expected: Expected,
     }{
-        .{ .input = "!5", .operator = "!", .integer_value = 5 },
-        .{ .input = "-15", .operator = "-", .integer_value = 15 },
+        .{ .input = "!5", .operator = "!", .expected = .{ .int = 5 } },
+        .{ .input = "-15", .operator = "-", .expected = .{ .int = 15 } },
+        .{ .input = "!true", .operator = "!", .expected = .{ .boolean = true } },
+        .{ .input = "!false", .operator = "!", .expected = .{ .boolean = false } },
     };
 
     for (tests) |t| {
@@ -477,8 +540,8 @@ test "parsing prefix expressions" {
         };
 
         try testing.expectEqualStrings(t.operator, exp.operator);
-
-        try testIntegerLiteral(exp.right.?, t.integer_value);
+        try testing.expectEqualStrings(t.operator, exp.tokenLiteral());
+        try testLiteralExpression(exp.right.?, t.expected);
     }
 }
 
@@ -489,18 +552,21 @@ test "parsing infix expressions" {
 
     const tests = [_]struct {
         input: []const u8,
-        left_value: i64,
+        left_value: Expected,
         operator: []const u8,
-        right_value: i64,
+        right_value: Expected,
     }{
-        .{ .input = "5 + 5;", .left_value = 5, .operator = "+", .right_value = 5 },
-        .{ .input = "5 - 5;", .left_value = 5, .operator = "-", .right_value = 5 },
-        .{ .input = "5 * 5;", .left_value = 5, .operator = "*", .right_value = 5 },
-        .{ .input = "5 / 5;", .left_value = 5, .operator = "/", .right_value = 5 },
-        .{ .input = "5 > 5;", .left_value = 5, .operator = ">", .right_value = 5 },
-        .{ .input = "5 < 5;", .left_value = 5, .operator = "<", .right_value = 5 },
-        .{ .input = "5 == 5;", .left_value = 5, .operator = "==", .right_value = 5 },
-        .{ .input = "5 != 5;", .left_value = 5, .operator = "!=", .right_value = 5 },
+        .{ .input = "5 + 5;", .left_value = .{ .int = 5 }, .operator = "+", .right_value = .{ .int = 5 } },
+        .{ .input = "5 - 5;", .left_value = .{ .int = 5 }, .operator = "-", .right_value = .{ .int = 5 } },
+        .{ .input = "5 * 5;", .left_value = .{ .int = 5 }, .operator = "*", .right_value = .{ .int = 5 } },
+        .{ .input = "5 / 5;", .left_value = .{ .int = 5 }, .operator = "/", .right_value = .{ .int = 5 } },
+        .{ .input = "5 > 5;", .left_value = .{ .int = 5 }, .operator = ">", .right_value = .{ .int = 5 } },
+        .{ .input = "5 < 5;", .left_value = .{ .int = 5 }, .operator = "<", .right_value = .{ .int = 5 } },
+        .{ .input = "5 == 5;", .left_value = .{ .int = 5 }, .operator = "==", .right_value = .{ .int = 5 } },
+        .{ .input = "5 != 5;", .left_value = .{ .int = 5 }, .operator = "!=", .right_value = .{ .int = 5 } },
+        .{ .input = "true == true", .left_value = .{ .boolean = true }, .operator = "==", .right_value = .{ .boolean = true } },
+        .{ .input = "true != true", .left_value = .{ .boolean = true }, .operator = "!=", .right_value = .{ .boolean = true } },
+        .{ .input = "false == false", .left_value = .{ .boolean = false }, .operator = "==", .right_value = .{ .boolean = false } },
     };
 
     for (tests) |t| {
@@ -521,18 +587,7 @@ test "parsing infix expressions" {
             },
         };
 
-        const exp = switch (expr_stmt.expression.?.*) {
-            .infix_expression => |ie| ie,
-            else => {
-                std.debug.print("stmt not InfixExpression. got={s}\n", .{@tagName(statement)});
-                return error.WrongStatementType;
-            },
-        };
-
-        try testing.expectEqualStrings(t.operator, exp.operator);
-
-        try testIntegerLiteral(exp.right.?, t.right_value);
-        try testIntegerLiteral(exp.left.?, t.left_value);
+        try testInfixExpression(expr_stmt.expression.?, t.left_value, t.operator, t.right_value);
     }
 }
 
@@ -557,6 +612,10 @@ test "operator precedence" {
         .{ .input = "5 > 4 == 3 < 4", .expected = "((5 > 4) == (3 < 4))" },
         .{ .input = "5 < 4 != 3 > 4", .expected = "((5 < 4) != (3 > 4))" },
         .{ .input = "3 + 4 * 5 == 3 * 1 + 4 * 5", .expected = "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))" },
+        .{ .input = "true", .expected = "true" },
+        .{ .input = "false", .expected = "false" },
+        .{ .input = "3 > 5 == false", .expected = "((3 > 5) == false)" },
+        .{ .input = "3 < 5 == true", .expected = "((3 < 5) == true)" },
     };
 
     for (tests) |t| {
@@ -611,6 +670,56 @@ fn testIntegerLiteral(exp: *ast.Expression, value: i64) !void {
     };
 
     try testing.expectEqual(value, literal.value);
+}
+
+fn testIdentifier(exp: *ast.Expression, value: []const u8) !void {
+    const ident = switch (exp.*) {
+        .identifier_expression => |ie| ie,
+        else => {
+            std.debug.print("stmt not IdentifierExpressions. got={s}\n", .{@tagName(exp.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqualStrings(value, ident.value);
+    try testing.expectEqualStrings(value, ident.tokenLiteral());
+}
+
+fn testBooleanLiteral(exp: *ast.Expression, value: bool) !void {
+    const literal = switch (exp.*) {
+        .boolean_expression => |be| be,
+        else => {
+            std.debug.print("stmt not BooleanLiteral. got={s}\n", .{@tagName(exp.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    const expected = if (value) "true" else "false";
+
+    try testing.expectEqual(value, literal.value);
+    try testing.expectEqualStrings(expected, literal.tokenLiteral());
+}
+
+fn testLiteralExpression(exp: *ast.Expression, expected: Expected) !void {
+    switch (expected) {
+        .int => |i| try testIntegerLiteral(exp, i),
+        .ident => |i| try testIdentifier(exp, i),
+        .boolean => |b| try testBooleanLiteral(exp, b),
+    }
+}
+
+fn testInfixExpression(exp: *ast.Expression, left: Expected, operator: []const u8, right: Expected) !void {
+    const infix = switch (exp.*) {
+        .infix_expression => |i| i,
+        else => {
+            std.debug.print("exp not InfixExpression. got={s}\n", .{@tagName(exp.*)});
+            return error.WrongExpressionType;
+        },
+    };
+
+    try testLiteralExpression(infix.left.?, left);
+    try testing.expectEqualStrings(operator, infix.operator);
+    try testLiteralExpression(infix.right.?, right);
 }
 
 fn checkParserErrors(parser: Self) !void {

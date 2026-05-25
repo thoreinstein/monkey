@@ -47,6 +47,8 @@ pub const Expression = union(enum) {
     const Self = @This();
 
     identifier_expression: Identifier,
+    boolean_expression: BooleanExpression,
+
     prefix_expression: PrefixExpression,
     infix_expression: InfixExpression,
 
@@ -200,6 +202,21 @@ pub const InfixExpression = struct {
         try out.print(" {s} ", .{self.operator});
         if (self.right) |r| try r.write(out);
         try out.writeByte(')');
+    }
+};
+
+pub const BooleanExpression = struct {
+    const Self = @This();
+
+    token: token.Token,
+    value: bool,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.print("{}", .{self.value});
     }
 };
 
