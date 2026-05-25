@@ -5,7 +5,7 @@ const ast = @import("ast.zig");
 const Lexer = @import("lexer.zig");
 const token = @import("token.zig");
 
-const PrefixParseFn = *const fn (*Self) anyerror!?ast.Expression;
+const PrefixParseFn = *const fn (*Self) anyerror!?*ast.Expression;
 const InfixParseFn = *const fn (*Self, *ast.Expression) anyerror!?ast.Expression;
 
 const Precedence = enum(u8) {
@@ -44,6 +44,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerPrefix(.minus, Self.parsePrefixExpression);
     try parser.registerPrefix(.true_, Self.parseBoolean);
     try parser.registerPrefix(.false_, Self.parseBoolean);
+    try parser.registerPrefix(.lparen, Self.parseGroupedExpression);
 
     try parser.registerInfix(.plus, Self.parseInfixExpression);
     try parser.registerInfix(.minus, Self.parseInfixExpression);
@@ -158,7 +159,7 @@ fn parseExpression(self: *Self, precedence: Precedence) !?*ast.Expression {
 
     const left_value = try prefix(self) orelse return null;
     var left_exp = try self.allocator.create(ast.Expression);
-    left_exp.* = left_value;
+    left_exp = left_value;
 
     while (!self.peekTokenIs(.semicolon) and @intFromEnum(precedence) < @intFromEnum(self.peekPrecedence())) {
         const infix = self.infix_parse_fns.get(self.peek_token.kind) orelse return left_exp;
@@ -173,7 +174,7 @@ fn parseExpression(self: *Self, precedence: Precedence) !?*ast.Expression {
     return left_exp;
 }
 
-fn parsePrefixExpression(self: *Self) !?ast.Expression {
+fn parsePrefixExpression(self: *Self) !?*ast.Expression {
     var expression = ast.PrefixExpression{
         .token = self.current_token,
         .operator = self.current_token.literal,
@@ -183,9 +184,13 @@ fn parsePrefixExpression(self: *Self) !?ast.Expression {
 
     expression.right = (try self.parseExpression(.prefix)) orelse return null;
 
-    return .{
+    const new = try self.allocator.create(ast.Expression);
+
+    new.* = ast.Expression{
         .prefix_expression = expression,
     };
+
+    return new;
 }
 
 fn parseInfixExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
@@ -206,14 +211,18 @@ fn parseInfixExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
     };
 }
 
-fn parseIdentifier(self: *const Self) !?ast.Expression {
-    return .{ .identifier_expression = .{
+fn parseIdentifier(self: *const Self) !?*ast.Expression {
+    const new = try self.allocator.create(ast.Expression);
+
+    new.* = .{ .identifier_expression = .{
         .token = self.current_token,
         .value = self.current_token.literal,
     } };
+
+    return new;
 }
 
-fn parseIntegerLiteral(self: *Self) !?ast.Expression {
+fn parseIntegerLiteral(self: *Self) !?*ast.Expression {
     var literal = ast.IntegerLiteral{
         .token = self.current_token,
     };
@@ -228,16 +237,34 @@ fn parseIntegerLiteral(self: *Self) !?ast.Expression {
 
     literal.value = value;
 
-    return .{
+    const new = try self.allocator.create(ast.Expression);
+
+    new.* = .{
         .integer_literal = literal,
     };
+
+    return new;
 }
 
-fn parseBoolean(self: *Self) !?ast.Expression {
-    return .{ .boolean_expression = .{
+fn parseBoolean(self: *const Self) !?*ast.Expression {
+    const new = try self.allocator.create(ast.Expression);
+
+    new.* = .{ .boolean_expression = .{
         .token = self.current_token,
         .value = self.currentTokenIs(.true_),
     } };
+
+    return new;
+}
+
+fn parseGroupedExpression(self: *Self) !?*ast.Expression {
+    self.nextToken();
+
+    const exp = self.parseExpression(.lowest);
+
+    if (!(try self.expectPeek(.rparen))) return null;
+
+    return exp;
 }
 
 fn currentTokenIs(self: *const Self, kind: token.TokenKind) bool {
@@ -616,6 +643,11 @@ test "operator precedence" {
         .{ .input = "false", .expected = "false" },
         .{ .input = "3 > 5 == false", .expected = "((3 > 5) == false)" },
         .{ .input = "3 < 5 == true", .expected = "((3 < 5) == true)" },
+        .{ .input = "1 + (2 + 3) + 4", .expected = "((1 + (2 + 3)) + 4)" },
+        .{ .input = "(5 + 5) * 2", .expected = "((5 + 5) * 2)" },
+        .{ .input = "2 / (5 + 5)", .expected = "(2 / (5 + 5))" },
+        .{ .input = "-(5 + 5)", .expected = "(-(5 + 5))" },
+        .{ .input = "!(true == true)", .expected = "(!(true == true))" },
     };
 
     for (tests) |t| {
