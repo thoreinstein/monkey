@@ -12,6 +12,7 @@ pub fn eval(node: ast.Node) ?object.Object {
         .statement => |s| {
             switch (s) {
                 .expression_statement => |es| return eval(.{ .expression = es.expression.?.* }),
+                .block_statement => |bs| return evalStatements(bs.statements),
                 else => return null,
             }
         },
@@ -19,6 +20,7 @@ pub fn eval(node: ast.Node) ?object.Object {
             switch (e) {
                 .integer_literal => |il| return .{ .integer = .{ .value = il.value } },
                 .boolean_expression => |be| return .{ .boolean = .{ .value = be.value } },
+                .if_expression => |ie| return evalIfExpression(ie),
                 .prefix_expression => |pe| {
                     const right = eval(.{ .expression = pe.right.?.* }) orelse return null;
 
@@ -91,6 +93,28 @@ fn evalIntegerIntegerInfixExpression(operator: []const u8, left: object.Object, 
 
     return .{ .null_ = .{} };
 }
+
+fn evalIfExpression(exp: ast.IfExpression) ?object.Object {
+    const condition = eval(.{ .expression = exp.condition.?.* }) orelse return null;
+
+    if (isTruthy(condition)) return eval(.{ .statement = .{ .block_statement = exp.consequence.? } });
+    if (exp.alternative) |a| return eval(.{ .statement = .{ .block_statement = a } });
+
+    return .{ .null_ = .{} };
+}
+
+fn isTruthy(obj: object.Object) bool {
+    return switch (obj) {
+        .null_ => false,
+        .boolean => |b| if (b.value) true else false,
+        else => true,
+    };
+}
+
+const Expected = union(enum) {
+    int: i64,
+    null_: void,
+};
 
 test "integer expressions" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -186,6 +210,33 @@ test "bang operator" {
     }
 }
 
+test "if/else expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: Expected,
+    }{
+        .{ .input = "if (true) { 10 }", .expected = .{ .int = 10 } },
+        .{ .input = "if (false) { 10 }", .expected = .null_ },
+        .{ .input = "if (1) { 10 }", .expected = .{ .int = 10 } },
+        .{ .input = "if (1 < 2) { 10 }", .expected = .{ .int = 10 } },
+        .{ .input = "if (1 > 2) { 10 }", .expected = .null_ },
+        .{ .input = "if (1 > 2) { 10 } else { 20 }", .expected = .{ .int = 20 } },
+        .{ .input = "if (1 < 2) { 10 } else { 20 }", .expected = .{ .int = 10 } },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+
+        switch (t.expected) {
+            .int => |i| try testIntegerObject(evaluated, i),
+            .null_ => try testNullObject(evaluated),
+        }
+    }
+}
+
 fn testEval(allocator: std.mem.Allocator, input: []const u8) !?object.Object {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
@@ -217,4 +268,14 @@ fn testBooleanObject(obj: object.Object, expected: bool) !void {
     };
 
     try testing.expectEqual(expected, result.value);
+}
+
+fn testNullObject(obj: object.Object) !void {
+    switch (obj) {
+        .null_ => {},
+        else => {
+            std.debug.print("obj is not Null. got={s}\n", .{@tagName(obj)});
+            return error.WrongExpressionType;
+        },
+    }
 }
