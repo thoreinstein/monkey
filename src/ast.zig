@@ -92,7 +92,7 @@ pub const LetStatement = struct {
 
     token: token.Token,
     name: Identifier = undefined,
-    value: ?Expression = null,
+    value: ?*Expression = null,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return self.token.literal;
@@ -111,7 +111,7 @@ pub const ReturnStatement = struct {
     const Self = @This();
 
     token: token.Token,
-    return_value: ?Expression = null,
+    return_value: ?*Expression = null,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return self.token.literal;
@@ -309,19 +309,31 @@ pub const CallExpression = struct {
 };
 
 test "write" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     var program = Program{};
     defer program.statements.deinit(testing.allocator);
 
     var buf: [64]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
 
-    try program.statements.append(testing.allocator, .{ .let_statement = .{ .token = .{ .kind = .let, .literal = "let" }, .name = .{
-        .token = .{ .kind = .ident, .literal = "myVar" },
-        .value = "myVar",
-    }, .value = .{ .identifier_expression = .{
+    const exp = try allocator.create(Expression);
+
+    exp.* = .{ .identifier_expression = .{
         .token = .{ .kind = .ident, .literal = "anotherVar" },
         .value = "anotherVar",
-    } } } });
+    } };
+
+    try program.statements.append(testing.allocator, .{ .let_statement = .{
+        .token = .{ .kind = .let, .literal = "let" },
+        .name = .{
+            .token = .{ .kind = .ident, .literal = "myVar" },
+            .value = "myVar",
+        },
+        .value = exp,
+    } });
 
     try program.write(&w);
 

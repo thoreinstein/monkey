@@ -124,18 +124,23 @@ fn parseLetStatement(self: *Self) !?ast.LetStatement {
 
     if (!(try self.expectPeek(.assign))) return null;
 
-    //TODO: We're skipping the expressoins until we encounter a semicolon
-    while (!self.currentTokenIs(.semicolon)) self.nextToken();
+    self.nextToken();
+
+    statement.value = try self.parseExpression(.lowest);
+
+    if (self.peekTokenIs(.semicolon)) self.nextToken();
 
     return statement;
 }
 
 fn parseReturnStatement(self: *Self) !?ast.ReturnStatement {
-    const statement = ast.ReturnStatement{
+    var statement = ast.ReturnStatement{
         .token = self.current_token,
     };
 
     self.nextToken();
+
+    statement.return_value = try self.parseExpression(.lowest);
 
     while (!self.currentTokenIs(.semicolon)) self.nextToken();
 
@@ -487,26 +492,32 @@ test "let statements" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const input =
-        \\let x = 5;
-        \\let y = 10;
-        \\let foobar = 838383;
-    ;
-
-    const program = try parseAndCheckProgram(allocator, input, 3);
-
     const tests = [_]struct {
+        input: []const u8,
         expected_identifier: []const u8,
+        expected_value: Expected,
     }{
-        .{ .expected_identifier = "x" },
-        .{ .expected_identifier = "y" },
-        .{ .expected_identifier = "foobar" },
+        .{ .input = "let x = 5;", .expected_identifier = "x", .expected_value = .{ .int = 5 } },
+        .{ .input = "let y = true;", .expected_identifier = "y", .expected_value = .{ .boolean = true } },
+        .{ .input = "let foobar = y;", .expected_identifier = "foobar", .expected_value = .{ .ident = "y" } },
     };
 
-    for (tests, 0..) |t, i| {
-        const statement = program.statements.items[i];
+    for (tests) |t| {
+        const program = try parseAndCheckProgram(allocator, t.input, 1);
+
+        const statement = program.statements.items[0];
 
         try testLetStatement(statement, t.expected_identifier);
+
+        const let_stmt = switch (statement) {
+            .let_statement => |ls| ls,
+            else => {
+                std.debug.print("stmt not LetStatement. got={s}\n", .{@tagName(statement)});
+                return error.WrongStatementType;
+            },
+        };
+
+        try testLiteralExpression(let_stmt.value.?, t.expected_value);
     }
 }
 
@@ -515,15 +526,20 @@ test "return statements" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const input =
-        \\return 5;
-        \\return 10;
-        \\return 993322;
-    ;
+    const tests = [_]struct {
+        input: []const u8,
+        expected: Expected,
+    }{
+        .{ .input = "return 5;", .expected = .{ .int = 5 } },
+        .{ .input = "return true;", .expected = .{ .boolean = true } },
+        .{ .input = "return y;", .expected = .{ .ident = "y" } },
+    };
 
-    const program = try parseAndCheckProgram(allocator, input, 3);
+    for (tests) |t| {
+        const program = try parseAndCheckProgram(allocator, t.input, 1);
 
-    for (program.statements.items) |statement| {
+        const statement = program.statements.items[0];
+
         const return_stmt = switch (statement) {
             .return_statement => |rs| rs,
             else => {
@@ -533,6 +549,8 @@ test "return statements" {
         };
 
         try testing.expectEqualStrings("return", return_stmt.tokenLiteral());
+
+        try testLiteralExpression(return_stmt.return_value.?, t.expected);
     }
 }
 
