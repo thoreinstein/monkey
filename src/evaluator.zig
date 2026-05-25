@@ -40,6 +40,7 @@ fn evalStatements(stmts: std.ArrayList(ast.Statement)) ?object.Object {
 
 fn evalPrefixExpression(operator: []const u8, right: object.Object) ?object.Object {
     if (std.mem.eql(u8, "!", operator)) return evalBangOperatorExpression(right);
+    if (std.mem.eql(u8, "-", operator)) return evalMinusOperatorExpression(right);
 
     return null;
 }
@@ -52,6 +53,12 @@ fn evalBangOperatorExpression(right: object.Object) object.Object {
     };
 }
 
+fn evalMinusOperatorExpression(right: object.Object) object.Object {
+    if (!std.mem.eql(u8, object.INTEGER_OBJ, right.kind())) return .{ .null_ = .{} };
+
+    return .{ .integer = .{ .value = -right.integer.value } };
+}
+
 test "integer expressions" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -62,6 +69,8 @@ test "integer expressions" {
     }{
         .{ .input = "5", .expected = 5 },
         .{ .input = "10", .expected = 10 },
+        .{ .input = "-5", .expected = -5 },
+        .{ .input = "-10", .expected = -10 },
     };
 
     for (tests) |t| {

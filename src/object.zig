@@ -1,5 +1,9 @@
 const std = @import("std");
 
+pub const INTEGER_OBJ = "INTEGER";
+pub const BOOLEAN_OBJ = "BOOLEAN";
+pub const NULL_OBJ = "NULL";
+
 pub const Object = union(enum) {
     const Self = @This();
 
@@ -27,7 +31,7 @@ pub const Integer = struct {
 
     pub fn kind(self: *const Self) []const u8 {
         _ = self;
-        return "INTEGER";
+        return INTEGER_OBJ;
     }
 
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
@@ -42,7 +46,7 @@ pub const Boolean = struct {
 
     pub fn kind(self: *const Self) []const u8 {
         _ = self;
-        return "Boolean";
+        return BOOLEAN_OBJ;
     }
 
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
@@ -55,7 +59,7 @@ pub const Null = struct {
 
     pub fn kind(self: *const Self) []const u8 {
         _ = self;
-        return "NULL";
+        return NULL_OBJ;
     }
 
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
