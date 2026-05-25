@@ -24,6 +24,12 @@ pub fn eval(node: ast.Node) ?object.Object {
 
                     return evalPrefixExpression(pe.operator, right);
                 },
+                .infix_expression => |ie| {
+                    const left = eval(.{ .expression = ie.left.?.* }) orelse return null;
+                    const right = eval(.{ .expression = ie.right.?.* }) orelse return null;
+
+                    return evalInfixExpression(ie.operator, left, right);
+                },
                 else => return null,
             }
         },
@@ -45,6 +51,14 @@ fn evalPrefixExpression(operator: []const u8, right: object.Object) ?object.Obje
     return null;
 }
 
+fn evalInfixExpression(operator: []const u8, left: object.Object, right: object.Object) object.Object {
+    if (std.mem.eql(u8, object.INTEGER_OBJ, left.kind()) and std.mem.eql(u8, object.INTEGER_OBJ, right.kind())) {
+        return evalIntegerIntegerInfixExpression(operator, left, right);
+    }
+
+    return .{ .null_ = .{} };
+}
+
 fn evalBangOperatorExpression(right: object.Object) object.Object {
     return switch (right) {
         .boolean => |b| .{ .boolean = .{ .value = !b.value } },
@@ -59,6 +73,18 @@ fn evalMinusOperatorExpression(right: object.Object) object.Object {
     return .{ .integer = .{ .value = -right.integer.value } };
 }
 
+fn evalIntegerIntegerInfixExpression(operator: []const u8, left: object.Object, right: object.Object) object.Object {
+    const leftVal = left.integer.value;
+    const rightVal = right.integer.value;
+
+    if (std.mem.eql(u8, "+", operator)) return .{ .integer = .{ .value = leftVal + rightVal } };
+    if (std.mem.eql(u8, "-", operator)) return .{ .integer = .{ .value = leftVal - rightVal } };
+    if (std.mem.eql(u8, "*", operator)) return .{ .integer = .{ .value = leftVal * rightVal } };
+    if (std.mem.eql(u8, "/", operator)) return .{ .integer = .{ .value = @divTrunc(leftVal, rightVal) } };
+
+    return .{ .null_ = .{} };
+}
+
 test "integer expressions" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -71,6 +97,17 @@ test "integer expressions" {
         .{ .input = "10", .expected = 10 },
         .{ .input = "-5", .expected = -5 },
         .{ .input = "-10", .expected = -10 },
+        .{ .input = "5 + 5 + 5 + 5 - 10", .expected = 10 },
+        .{ .input = "2 * 2 * 2 * 2 * 2", .expected = 32 },
+        .{ .input = "-50 + 100 + -50", .expected = 0 },
+        .{ .input = "5 * 2 + 10", .expected = 20 },
+        .{ .input = "5 + 2 * 10", .expected = 25 },
+        .{ .input = "20 + 2 * -10", .expected = 0 },
+        .{ .input = "50 / 2 * 2 + 10", .expected = 60 },
+        .{ .input = "2 * (5 + 10)", .expected = 30 },
+        .{ .input = "3 * 3 * 3 + 10", .expected = 37 },
+        .{ .input = "3 * (3 * 3) + 10", .expected = 37 },
+        .{ .input = "(5 + 10 * 2 + 15 / 3) * 2 + -10", .expected = 50 },
     };
 
     for (tests) |t| {
