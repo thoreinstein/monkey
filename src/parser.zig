@@ -451,12 +451,7 @@ test "let statements" {
         \\let foobar = 838383;
     ;
 
-    const program = try parseAndCheckProgram(allocator, input);
-
-    if (program.statements.items.len != 3) {
-        std.debug.print("parseProgram returned null\n", .{});
-        return error.NumProgramStatements;
-    }
+    const program = try parseAndCheckProgram(allocator, input, 3);
 
     const tests = [_]struct {
         expected_identifier: []const u8,
@@ -484,12 +479,7 @@ test "return statements" {
         \\return 993322;
     ;
 
-    const program = try parseAndCheckProgram(allocator, input);
-
-    if (program.statements.items.len != 3) {
-        std.debug.print("parseProgram returned null\n", .{});
-        return error.NumProgramStatements;
-    }
+    const program = try parseAndCheckProgram(allocator, input, 3);
 
     for (program.statements.items) |statement| {
         const return_stmt = switch (statement) {
@@ -511,27 +501,14 @@ test "identifier expressions" {
 
     const input = "foobar;";
 
-    const program = try parseAndCheckProgram(allocator, input);
+    const program = try parseAndCheckProgram(allocator, input, 1);
 
-    if (program.statements.items.len != 1) {
-        std.debug.print("parseProgram returned null\n", .{});
-        return error.NumProgramStatements;
-    }
-
-    const statement = program.statements.items[0];
-
-    const expr_stmt = switch (statement) {
-        .expression_statement => |es| es,
-        else => {
-            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-            return error.WrongStatementType;
-        },
-    };
+    const expr_stmt = try getExpressionStatement(program);
 
     const ident = switch (expr_stmt.expression.?.*) {
         .identifier_expression => |ie| ie,
         else => {
-            std.debug.print("stmt not ast.Identifier. got={s}\n", .{@tagName(statement)});
+            std.debug.print("stmt not ast.Identifier. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
             return error.WrongStatementType;
         },
     };
@@ -547,27 +524,14 @@ test "integer literal expressions" {
 
     const input = "5;";
 
-    const program = try parseAndCheckProgram(allocator, input);
+    const program = try parseAndCheckProgram(allocator, input, 1);
 
-    if (program.statements.items.len != 1) {
-        std.debug.print("parseProgram returned null\n", .{});
-        return error.NumProgramStatements;
-    }
-
-    const statement = program.statements.items[0];
-
-    const expr_stmt = switch (statement) {
-        .expression_statement => |es| es,
-        else => {
-            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-            return error.WrongStatementType;
-        },
-    };
+    const expr_stmt = try getExpressionStatement(program);
 
     const literal = switch (expr_stmt.expression.?.*) {
         .integer_literal => |il| il,
         else => {
-            std.debug.print("stmt not IntegerLiteral. got={s}\n", .{@tagName(statement)});
+            std.debug.print("stmt not IntegerLiteral. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
             return error.WrongStatementType;
         },
     };
@@ -590,27 +554,14 @@ test "boolean expressions" {
     };
 
     for (tests) |t| {
-        const program = try parseAndCheckProgram(allocator, t.input);
+        const program = try parseAndCheckProgram(allocator, t.input, 1);
 
-        if (program.statements.items.len != 1) {
-            std.debug.print("parseProgram returned null\n", .{});
-            return error.NumProgramStatements;
-        }
-
-        const statement = program.statements.items[0];
-
-        const expr_stmt = switch (statement) {
-            .expression_statement => |es| es,
-            else => {
-                std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-                return error.WrongStatementType;
-            },
-        };
+        const expr_stmt = try getExpressionStatement(program);
 
         const boolean = switch (expr_stmt.expression.?.*) {
             .boolean_expression => |be| be,
             else => {
-                std.debug.print("stmt not PrefixExpression. got={s}\n", .{@tagName(statement)});
+                std.debug.print("stmt not PrefixExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
                 return error.WrongStatementType;
             },
         };
@@ -639,27 +590,14 @@ test "parsing prefix expressions" {
     };
 
     for (tests) |t| {
-        const program = try parseAndCheckProgram(allocator, t.input);
+        const program = try parseAndCheckProgram(allocator, t.input, 1);
 
-        if (program.statements.items.len != 1) {
-            std.debug.print("parseProgram returned null\n", .{});
-            return error.NumProgramStatements;
-        }
-
-        const statement = program.statements.items[0];
-
-        const expr_stmt = switch (statement) {
-            .expression_statement => |es| es,
-            else => {
-                std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-                return error.WrongStatementType;
-            },
-        };
+        const expr_stmt = try getExpressionStatement(program);
 
         const exp = switch (expr_stmt.expression.?.*) {
             .prefix_expression => |pe| pe,
             else => {
-                std.debug.print("stmt not PrefixExpression. got={s}\n", .{@tagName(statement)});
+                std.debug.print("stmt not PrefixExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
                 return error.WrongStatementType;
             },
         };
@@ -695,22 +633,9 @@ test "parsing infix expressions" {
     };
 
     for (tests) |t| {
-        const program = try parseAndCheckProgram(allocator, t.input);
+        const program = try parseAndCheckProgram(allocator, t.input, 1);
 
-        if (program.statements.items.len != 1) {
-            std.debug.print("parseProgram returned null\n", .{});
-            return error.NumProgramStatements;
-        }
-
-        const statement = program.statements.items[0];
-
-        const expr_stmt = switch (statement) {
-            .expression_statement => |es| es,
-            else => {
-                std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-                return error.WrongStatementType;
-            },
-        };
+        const expr_stmt = try getExpressionStatement(program);
 
         try testInfixExpression(expr_stmt.expression.?, t.left_value, t.operator, t.right_value);
     }
@@ -723,27 +648,14 @@ test "if expressions" {
 
     const input = "if (x < y) { x }";
 
-    const program = try parseAndCheckProgram(allocator, input);
+    const program = try parseAndCheckProgram(allocator, input, 1);
 
-    if (program.statements.items.len != 1) {
-        std.debug.print("parseProgram returned null\n", .{});
-        return error.NumProgramStatements;
-    }
-
-    const statement = program.statements.items[0];
-
-    const expr_stmt = switch (statement) {
-        .expression_statement => |es| es,
-        else => {
-            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-            return error.WrongStatementType;
-        },
-    };
+    const expr_stmt = try getExpressionStatement(program);
 
     const if_exp = switch (expr_stmt.expression.?.*) {
         .if_expression => |ie| ie,
         else => {
-            std.debug.print("stmt not IfExpression. got={s}\n", .{@tagName(statement)});
+            std.debug.print("stmt not IfExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
             return error.WrongStatementType;
         },
     };
@@ -771,27 +683,14 @@ test "if else expression" {
 
     const input = "if (x < y) { x } else { y }";
 
-    const program = try parseAndCheckProgram(allocator, input);
+    const program = try parseAndCheckProgram(allocator, input, 1);
 
-    if (program.statements.items.len != 1) {
-        std.debug.print("parseProgram returned null\n", .{});
-        return error.NumProgramStatements;
-    }
-
-    const statement = program.statements.items[0];
-
-    const expr_stmt = switch (statement) {
-        .expression_statement => |s| s,
-        else => {
-            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-            return error.WrongStatementType;
-        },
-    };
+    const expr_stmt = try getExpressionStatement(program);
 
     const exp = switch (expr_stmt.expression.?.*) {
         .if_expression => |p| p,
         else => {
-            std.debug.print("stmt not IfExpression. got={s}\n", .{@tagName(statement)});
+            std.debug.print("stmt not IfExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
             return error.WrongStatementType;
         },
     };
@@ -826,27 +725,14 @@ test "function literals" {
 
     const input = "fn(x, y) { x + y; }";
 
-    const program = try parseAndCheckProgram(allocator, input);
+    const program = try parseAndCheckProgram(allocator, input, 1);
 
-    if (program.statements.items.len != 1) {
-        std.debug.print("parseProgram returned null\n", .{});
-        return error.NumProgramStatements;
-    }
-
-    const statement = program.statements.items[0];
-
-    const expr_stmt = switch (statement) {
-        .expression_statement => |s| s,
-        else => {
-            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-            return error.WrongStatementType;
-        },
-    };
+    const expr_stmt = try getExpressionStatement(program);
 
     const fun_literal = switch (expr_stmt.expression.?.*) {
         .function_literal => |fl| fl,
         else => {
-            std.debug.print("stmt not FunctionLiteral. got={s}\n", .{@tagName(statement)});
+            std.debug.print("stmt not FunctionLiteral. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
             return error.WrongStatementType;
         },
     };
@@ -860,7 +746,7 @@ test "function literals" {
     const body_stmt = switch (fun_literal.body.?.statements.items[0]) {
         .expression_statement => |es| es,
         else => {
-            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
             return error.WrongStatementType;
         },
     };
@@ -883,27 +769,14 @@ test "function parameters" {
     };
 
     for (tests) |t| {
-        const program = try parseAndCheckProgram(allocator, t.input);
+        const program = try parseAndCheckProgram(allocator, t.input, 1);
 
-        if (program.statements.items.len != 1) {
-            std.debug.print("parseProgram returned null\n", .{});
-            return error.NumProgramStatements;
-        }
-
-        const statement = program.statements.items[0];
-
-        const expr_stmt = switch (statement) {
-            .expression_statement => |s| s,
-            else => {
-                std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
-                return error.WrongStatementType;
-            },
-        };
+        const expr_stmt = try getExpressionStatement(program);
 
         const fun_literal = switch (expr_stmt.expression.?.*) {
             .function_literal => |fl| fl,
             else => {
-                std.debug.print("stmt not FunctionLiteral. got={s}\n", .{@tagName(statement)});
+                std.debug.print("stmt not FunctionLiteral. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
                 return error.WrongStatementType;
             },
         };
@@ -924,32 +797,33 @@ test "operator precedence" {
     const tests = [_]struct {
         input: []const u8,
         expected: []const u8,
+        size: usize,
     }{
-        .{ .input = "-a * b", .expected = "((-a) * b)" },
-        .{ .input = "!-a", .expected = "(!(-a))" },
-        .{ .input = "a + b + c", .expected = "((a + b) + c)" },
-        .{ .input = "a + b - c", .expected = "((a + b) - c)" },
-        .{ .input = "a * b * c", .expected = "((a * b) * c)" },
-        .{ .input = "a * b / c", .expected = "((a * b) / c)" },
-        .{ .input = "a + b / c", .expected = "(a + (b / c))" },
-        .{ .input = "a + b * c + d / e - f", .expected = "(((a + (b * c)) + (d / e)) - f)" },
-        .{ .input = "3 + 4; -5 * 5", .expected = "(3 + 4)((-5) * 5)" },
-        .{ .input = "5 > 4 == 3 < 4", .expected = "((5 > 4) == (3 < 4))" },
-        .{ .input = "5 < 4 != 3 > 4", .expected = "((5 < 4) != (3 > 4))" },
-        .{ .input = "3 + 4 * 5 == 3 * 1 + 4 * 5", .expected = "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))" },
-        .{ .input = "true", .expected = "true" },
-        .{ .input = "false", .expected = "false" },
-        .{ .input = "3 > 5 == false", .expected = "((3 > 5) == false)" },
-        .{ .input = "3 < 5 == true", .expected = "((3 < 5) == true)" },
-        .{ .input = "1 + (2 + 3) + 4", .expected = "((1 + (2 + 3)) + 4)" },
-        .{ .input = "(5 + 5) * 2", .expected = "((5 + 5) * 2)" },
-        .{ .input = "2 / (5 + 5)", .expected = "(2 / (5 + 5))" },
-        .{ .input = "-(5 + 5)", .expected = "(-(5 + 5))" },
-        .{ .input = "!(true == true)", .expected = "(!(true == true))" },
+        .{ .input = "-a * b", .expected = "((-a) * b)", .size = 1 },
+        .{ .input = "!-a", .expected = "(!(-a))", .size = 1 },
+        .{ .input = "a + b + c", .expected = "((a + b) + c)", .size = 1 },
+        .{ .input = "a + b - c", .expected = "((a + b) - c)", .size = 1 },
+        .{ .input = "a * b * c", .expected = "((a * b) * c)", .size = 1 },
+        .{ .input = "a * b / c", .expected = "((a * b) / c)", .size = 1 },
+        .{ .input = "a + b / c", .expected = "(a + (b / c))", .size = 1 },
+        .{ .input = "a + b * c + d / e - f", .expected = "(((a + (b * c)) + (d / e)) - f)", .size = 1 },
+        .{ .input = "3 + 4; -5 * 5", .expected = "(3 + 4)((-5) * 5)", .size = 2 },
+        .{ .input = "5 > 4 == 3 < 4", .expected = "((5 > 4) == (3 < 4))", .size = 1 },
+        .{ .input = "5 < 4 != 3 > 4", .expected = "((5 < 4) != (3 > 4))", .size = 1 },
+        .{ .input = "3 + 4 * 5 == 3 * 1 + 4 * 5", .expected = "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))", .size = 1 },
+        .{ .input = "true", .expected = "true", .size = 1 },
+        .{ .input = "false", .expected = "false", .size = 1 },
+        .{ .input = "3 > 5 == false", .expected = "((3 > 5) == false)", .size = 1 },
+        .{ .input = "3 < 5 == true", .expected = "((3 < 5) == true)", .size = 1 },
+        .{ .input = "1 + (2 + 3) + 4", .expected = "((1 + (2 + 3)) + 4)", .size = 1 },
+        .{ .input = "(5 + 5) * 2", .expected = "((5 + 5) * 2)", .size = 1 },
+        .{ .input = "2 / (5 + 5)", .expected = "(2 / (5 + 5))", .size = 1 },
+        .{ .input = "-(5 + 5)", .expected = "(-(5 + 5))", .size = 1 },
+        .{ .input = "!(true == true)", .expected = "(!(true == true))", .size = 1 },
     };
 
     for (tests) |t| {
-        const program = try parseAndCheckProgram(allocator, t.input);
+        const program = try parseAndCheckProgram(allocator, t.input, t.size);
 
         var buf: [64]u8 = undefined;
         var w = std.Io.Writer.fixed(&buf);
@@ -960,7 +834,7 @@ test "operator precedence" {
     }
 }
 
-fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
+fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8, size: usize) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try init(allocator, lexer);
     defer parser.deinit();
@@ -970,9 +844,23 @@ fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8) !ast.Pr
         return error.ProgramParse;
     };
 
+    try testing.expectEqual(size, program.statements.items.len);
+
     try checkParserErrors(parser);
 
     return program;
+}
+
+fn getExpressionStatement(program: ast.Program) !ast.ExpressionStatement {
+    const statement = program.statements.items[0];
+
+    return switch (statement) {
+        .expression_statement => |es| es,
+        else => {
+            std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+            return error.WrongStatementType;
+        },
+    };
 }
 
 fn testLetStatement(statement: ast.Statement, name: []const u8) !void {
