@@ -81,6 +81,10 @@ fn evalIntegerIntegerInfixExpression(operator: []const u8, left: object.Object, 
     if (std.mem.eql(u8, "-", operator)) return .{ .integer = .{ .value = leftVal - rightVal } };
     if (std.mem.eql(u8, "*", operator)) return .{ .integer = .{ .value = leftVal * rightVal } };
     if (std.mem.eql(u8, "/", operator)) return .{ .integer = .{ .value = @divTrunc(leftVal, rightVal) } };
+    if (std.mem.eql(u8, "<", operator)) return .{ .boolean = .{ .value = leftVal < rightVal } };
+    if (std.mem.eql(u8, ">", operator)) return .{ .boolean = .{ .value = leftVal > rightVal } };
+    if (std.mem.eql(u8, "==", operator)) return .{ .boolean = .{ .value = leftVal == rightVal } };
+    if (std.mem.eql(u8, "!=", operator)) return .{ .boolean = .{ .value = leftVal != rightVal } };
 
     return .{ .null_ = .{} };
 }
@@ -127,6 +131,14 @@ test "boolean expressions" {
     }{
         .{ .input = "true", .expected = true },
         .{ .input = "false", .expected = false },
+        .{ .input = "1 < 2", .expected = true },
+        .{ .input = "1 > 2", .expected = false },
+        .{ .input = "1 < 1", .expected = false },
+        .{ .input = "1 > 1", .expected = false },
+        .{ .input = "1 == 1", .expected = true },
+        .{ .input = "1 != 1", .expected = false },
+        .{ .input = "1 == 2", .expected = false },
+        .{ .input = "1 != 2", .expected = true },
     };
 
     for (tests) |t| {
