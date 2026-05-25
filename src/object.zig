@@ -3,6 +3,7 @@ const std = @import("std");
 pub const INTEGER_OBJ = "INTEGER";
 pub const BOOLEAN_OBJ = "BOOLEAN";
 pub const NULL_OBJ = "NULL";
+pub const RETURN_VALUE_OBJ = "RETURN_VALUE";
 
 pub const Object = union(enum) {
     const Self = @This();
@@ -10,6 +11,7 @@ pub const Object = union(enum) {
     integer: Integer,
     boolean: Boolean,
     null_: Null,
+    return_value: ReturnValue,
 
     pub fn kind(self: Self) []const u8 {
         return switch (self) {
@@ -67,5 +69,20 @@ pub const Null = struct {
         _ = allocator;
 
         return "null";
+    }
+};
+
+pub const ReturnValue = struct {
+    const Self = @This();
+
+    value: *Object,
+
+    pub fn kind(self: *const Self) []const u8 {
+        _ = self;
+        return RETURN_VALUE_OBJ;
+    }
+
+    pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        return self.value.inspect(allocator);
     }
 };

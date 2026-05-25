@@ -6,13 +6,20 @@ const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
 const ast = @import("ast.zig");
 
-pub fn eval(node: ast.Node) ?object.Object {
+pub fn eval(allocator: std.mem.Allocator, node: ast.Node) error{OutOfMemory}!?object.Object {
     switch (node) {
-        .program => |p| return evalStatements(p.statements),
+        .program => |p| return try evalProgram(allocator, p),
         .statement => |s| {
             switch (s) {
-                .expression_statement => |es| return eval(.{ .expression = es.expression.?.* }),
-                .block_statement => |bs| return evalStatements(bs.statements),
+                .expression_statement => |es| return try eval(allocator, .{ .expression = es.expression.?.* }),
+                .block_statement => |bs| return try evalBlockStatement(allocator, bs),
+                .return_statement => |rs| {
+                    const value = try eval(allocator, .{ .expression = rs.return_value.?.* }) orelse return null;
+
+                    const ptr = try allocator.create(object.Object);
+                    ptr.* = value;
+                    return .{ .return_value = .{ .value = ptr } };
+                },
                 else => return null,
             }
         },
@@ -20,15 +27,15 @@ pub fn eval(node: ast.Node) ?object.Object {
             switch (e) {
                 .integer_literal => |il| return .{ .integer = .{ .value = il.value } },
                 .boolean_expression => |be| return .{ .boolean = .{ .value = be.value } },
-                .if_expression => |ie| return evalIfExpression(ie),
+                .if_expression => |ie| return try evalIfExpression(allocator, ie),
                 .prefix_expression => |pe| {
-                    const right = eval(.{ .expression = pe.right.?.* }) orelse return null;
+                    const right = try eval(allocator, .{ .expression = pe.right.?.* }) orelse return null;
 
                     return evalPrefixExpression(pe.operator, right);
                 },
                 .infix_expression => |ie| {
-                    const left = eval(.{ .expression = ie.left.?.* }) orelse return null;
-                    const right = eval(.{ .expression = ie.right.?.* }) orelse return null;
+                    const left = try eval(allocator, .{ .expression = ie.left.?.* }) orelse return null;
+                    const right = try eval(allocator, .{ .expression = ie.right.?.* }) orelse return null;
 
                     return evalInfixExpression(ie.operator, left, right);
                 },
@@ -38,10 +45,46 @@ pub fn eval(node: ast.Node) ?object.Object {
     }
 }
 
-fn evalStatements(stmts: std.ArrayList(ast.Statement)) ?object.Object {
+fn evalProgram(allocator: std.mem.Allocator, program: ast.Program) !?object.Object {
     var result: ?object.Object = null;
 
-    for (stmts.items) |s| result = eval(.{ .statement = s });
+    for (program.statements.items) |stmt| {
+        result = try eval(allocator, .{ .statement = stmt });
+
+        if (result) |r| switch (r) {
+            .return_value => |rv| return rv.value.*,
+            else => {},
+        };
+    }
+
+    return result;
+}
+
+fn evalStatements(allocator: std.mem.Allocator, stmts: std.ArrayList(ast.Statement)) !?object.Object {
+    var result: ?object.Object = null;
+
+    for (stmts.items) |s| {
+        result = try eval(allocator, .{ .statement = s });
+
+        if (result) |r| switch (r) {
+            .return_value => |rv| return rv.value.*,
+            else => {},
+        };
+    }
+
+    return result;
+}
+
+fn evalBlockStatement(allocator: std.mem.Allocator, block: ast.BlockStatement) !?object.Object {
+    var result: ?object.Object = null;
+
+    for (block.statements.items) |stmt| {
+        result = try eval(allocator, .{ .statement = stmt });
+
+        if (result) |r| {
+            if (std.mem.eql(u8, object.RETURN_VALUE_OBJ, r.kind())) return r;
+        }
+    }
 
     return result;
 }
@@ -94,11 +137,11 @@ fn evalIntegerIntegerInfixExpression(operator: []const u8, left: object.Object, 
     return .{ .null_ = .{} };
 }
 
-fn evalIfExpression(exp: ast.IfExpression) ?object.Object {
-    const condition = eval(.{ .expression = exp.condition.?.* }) orelse return null;
+fn evalIfExpression(allocator: std.mem.Allocator, exp: ast.IfExpression) !?object.Object {
+    const condition = try eval(allocator, .{ .expression = exp.condition.?.* }) orelse return null;
 
-    if (isTruthy(condition)) return eval(.{ .statement = .{ .block_statement = exp.consequence.? } });
-    if (exp.alternative) |a| return eval(.{ .statement = .{ .block_statement = a } });
+    if (isTruthy(condition)) return try eval(allocator, .{ .statement = .{ .block_statement = exp.consequence.? } });
+    if (exp.alternative) |a| return try eval(allocator, .{ .statement = .{ .block_statement = a } });
 
     return .{ .null_ = .{} };
 }
@@ -237,13 +280,45 @@ test "if/else expressions" {
     }
 }
 
+test "return statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: i64,
+    }{
+        .{ .input = "return 10;", .expected = 10 },
+        .{ .input = "return 10; 9;", .expected = 10 },
+        .{ .input = "return 2 * 5; 9;", .expected = 10 },
+        .{ .input = "9; return 2 * 5; 9;", .expected = 10 },
+        .{
+            .input =
+            \\if (10 > 1) {
+            \\  if (10 > 1) {
+            \\    return 10;
+            \\  }
+            \\
+            \\ return 1;
+            ,
+            .expected = 10,
+        },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+
+        try testIntegerObject(evaluated, t.expected);
+    }
+}
+
 fn testEval(allocator: std.mem.Allocator, input: []const u8) !?object.Object {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
 
     const program = try parser.parseProgram() orelse return null;
 
-    return eval(.{ .program = program });
+    return try eval(allocator, .{ .program = program });
 }
 
 fn testIntegerObject(obj: object.Object, expected: i64) !void {
