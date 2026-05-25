@@ -19,6 +19,11 @@ pub fn eval(node: ast.Node) ?object.Object {
             switch (e) {
                 .integer_literal => |il| return .{ .integer = .{ .value = il.value } },
                 .boolean_expression => |be| return .{ .boolean = .{ .value = be.value } },
+                .prefix_expression => |pe| {
+                    const right = eval(.{ .expression = pe.right.?.* }) orelse return null;
+
+                    return evalPrefixExpression(pe.operator, right);
+                },
                 else => return null,
             }
         },
@@ -31,6 +36,20 @@ fn evalStatements(stmts: std.ArrayList(ast.Statement)) ?object.Object {
     for (stmts.items) |s| result = eval(.{ .statement = s });
 
     return result;
+}
+
+fn evalPrefixExpression(operator: []const u8, right: object.Object) ?object.Object {
+    if (std.mem.eql(u8, "!", operator)) return evalBangOperatorExpression(right);
+
+    return null;
+}
+
+fn evalBangOperatorExpression(right: object.Object) object.Object {
+    return switch (right) {
+        .boolean => |b| .{ .boolean = .{ .value = !b.value } },
+        .null_ => .{ .boolean = .{ .value = true } },
+        else => .{ .boolean = .{ .value = false } },
+    };
 }
 
 test "integer expressions" {
@@ -62,6 +81,29 @@ test "boolean expressions" {
     }{
         .{ .input = "true", .expected = true },
         .{ .input = "false", .expected = false },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+
+        try testBooleanObject(evaluated, t.expected);
+    }
+}
+
+test "bang operator" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: bool,
+    }{
+        .{ .input = "!true", .expected = false },
+        .{ .input = "!false", .expected = true },
+        .{ .input = "!5", .expected = false },
+        .{ .input = "!!true", .expected = true },
+        .{ .input = "!!false", .expected = false },
+        .{ .input = "!!5", .expected = true },
     };
 
     for (tests) |t| {
