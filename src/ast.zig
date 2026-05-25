@@ -48,6 +48,7 @@ pub const Expression = union(enum) {
 
     identifier_expression: Identifier,
     prefix_expression: PrefixExpression,
+    infix_expression: InfixExpression,
 
     integer_literal: IntegerLiteral,
 
@@ -176,6 +177,27 @@ pub const PrefixExpression = struct {
     pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         try out.writeByte('(');
         try out.writeAll(self.operator);
+        if (self.right) |r| try r.write(out);
+        try out.writeByte(')');
+    }
+};
+
+pub const InfixExpression = struct {
+    const Self = @This();
+
+    token: token.Token,
+    left: ?*Expression = null,
+    operator: []const u8 = "",
+    right: ?*Expression = null,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.writeByte('(');
+        if (self.left) |l| try l.write(out);
+        try out.print(" {s} ", .{self.operator});
         if (self.right) |r| try r.write(out);
         try out.writeByte(')');
     }

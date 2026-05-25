@@ -43,6 +43,15 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerPrefix(.bang, Self.parsePrefixExpression);
     try parser.registerPrefix(.minus, Self.parsePrefixExpression);
 
+    try parser.registerInfix(.plus, Self.parseInfixExpression);
+    try parser.registerInfix(.minus, Self.parseInfixExpression);
+    try parser.registerInfix(.slash, Self.parseInfixExpression);
+    try parser.registerInfix(.asterisk, Self.parseInfixExpression);
+    try parser.registerInfix(.eq, Self.parseInfixExpression);
+    try parser.registerInfix(.not_eq, Self.parseInfixExpression);
+    try parser.registerInfix(.lt, Self.parseInfixExpression);
+    try parser.registerInfix(.gt, Self.parseInfixExpression);
+
     parser.nextToken();
     parser.nextToken();
 
@@ -140,19 +149,26 @@ fn parseExpressionStatement(self: *Self) !?ast.ExpressionStatement {
 }
 
 fn parseExpression(self: *Self, precedence: Precedence) !?*ast.Expression {
-    _ = precedence;
     const prefix = self.prefix_parse_fns.get(self.current_token.kind) orelse {
         try self.noPrefixParseFnError(self.current_token.kind);
-
         return null;
     };
 
-    const leftExp = (try prefix(self)) orelse return null;
+    const left_value = try prefix(self) orelse return null;
+    var left_exp = try self.allocator.create(ast.Expression);
+    left_exp.* = left_value;
 
-    const new_exp = try self.allocator.create(ast.Expression);
-    new_exp.* = leftExp;
+    while (!self.peekTokenIs(.semicolon) and @intFromEnum(precedence) < @intFromEnum(self.peekPrecedence())) {
+        const infix = self.infix_parse_fns.get(self.peek_token.kind) orelse return left_exp;
+        self.nextToken();
 
-    return new_exp;
+        const new_value = (try infix(self, left_exp)) orelse return left_exp;
+        const new_exp = try self.allocator.create(ast.Expression);
+        new_exp.* = new_value;
+        left_exp = new_exp;
+    }
+
+    return left_exp;
 }
 
 fn parsePrefixExpression(self: *Self) !?ast.Expression {
@@ -167,6 +183,24 @@ fn parsePrefixExpression(self: *Self) !?ast.Expression {
 
     return .{
         .prefix_expression = expression,
+    };
+}
+
+fn parseInfixExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
+    var expression = ast.InfixExpression{
+        .token = self.current_token,
+        .operator = self.current_token.literal,
+        .left = left,
+    };
+
+    const precedence = self.currentPrecedence();
+
+    self.nextToken();
+
+    expression.right = try self.parseExpression(precedence) orelse return null;
+
+    return .{
+        .infix_expression = expression,
     };
 }
 
@@ -247,14 +281,21 @@ fn noPrefixParseFnError(self: *Self, kind: token.TokenKind) !void {
     try self.errors_.append(self.allocator, msg);
 }
 
-fn getPrecedence(t: token.TokenType) Precedence {
+fn peekPrecedence(self: Self) Precedence {
+    return getPrecedence(self.peek_token.kind);
+}
+
+fn currentPrecedence(self: Self) Precedence {
+    return getPrecedence(self.current_token.kind);
+}
+
+fn getPrecedence(t: token.TokenKind) Precedence {
     return switch (t) {
         .eq, .not_eq => .equals,
         .lt, .gt => .less_greater,
         .plus, .minus => .sum,
         .asterisk, .slash => .product,
         .lparen => .call,
-        .lbracket => .index,
         else => .lowest,
     };
 }
@@ -438,6 +479,60 @@ test "parsing prefix expressions" {
         try testing.expectEqualStrings(t.operator, exp.operator);
 
         try testIntegerLiteral(exp.right.?, t.integer_value);
+    }
+}
+
+test "parsing infix expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const tests = [_]struct {
+        input: []const u8,
+        left_value: i64,
+        operator: []const u8,
+        right_value: i64,
+    }{
+        .{ .input = "5 + 5;", .left_value = 5, .operator = "+", .right_value = 5 },
+        .{ .input = "5 - 5;", .left_value = 5, .operator = "-", .right_value = 5 },
+        .{ .input = "5 * 5;", .left_value = 5, .operator = "*", .right_value = 5 },
+        .{ .input = "5 / 5;", .left_value = 5, .operator = "/", .right_value = 5 },
+        .{ .input = "5 > 5;", .left_value = 5, .operator = ">", .right_value = 5 },
+        .{ .input = "5 < 5;", .left_value = 5, .operator = "<", .right_value = 5 },
+        .{ .input = "5 == 5;", .left_value = 5, .operator = "==", .right_value = 5 },
+        .{ .input = "5 != 5;", .left_value = 5, .operator = "!=", .right_value = 5 },
+    };
+
+    for (tests) |t| {
+        const program = try parseAndCheckProgram(allocator, t.input);
+
+        if (program.statements.items.len != 1) {
+            std.debug.print("parseProgram returned null\n", .{});
+            return error.NumProgramStatements;
+        }
+
+        const statement = program.statements.items[0];
+
+        const expr_stmt = switch (statement) {
+            .expression_statement => |es| es,
+            else => {
+                std.debug.print("stmt not ExpressionStatement. got={s}\n", .{@tagName(statement)});
+                return error.WrongStatementType;
+            },
+        };
+
+        const exp = switch (expr_stmt.expression.?.*) {
+            .infix_expression => |ie| ie,
+            else => {
+                std.debug.print("stmt not InfixExpression. got={s}\n", .{@tagName(statement)});
+                return error.WrongStatementType;
+            },
+        };
+
+        try testing.expectEqualStrings(t.operator, exp.operator);
+
+        try testIntegerLiteral(exp.right.?, t.right_value);
+        try testIntegerLiteral(exp.left.?, t.left_value);
     }
 }
 
