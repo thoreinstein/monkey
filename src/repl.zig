@@ -2,6 +2,7 @@ const std = @import("std");
 const io = std.Io;
 
 const Lexer = @import("lexer.zig");
+const Evaluator = @import("evaluator.zig");
 const Parser = @import("parser.zig");
 
 const PROMPT = ">> ";
@@ -29,7 +30,11 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             continue;
         }
 
-        try program.write(out);
+        const evaluated = Evaluator.eval(.{ .program = program }) orelse return null;
+
+        const rendered = try evaluated.inspect(allocator);
+
+        try out.writeAll(rendered);
         try out.writeAll("\n");
 
         try out.flush();

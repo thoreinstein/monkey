@@ -14,3 +14,13 @@ pub fn main(init: std.process.Init) !void {
 
     _ = try repl.start(init.gpa, in, out);
 }
+
+test {
+    _ = @import("ast.zig");
+    _ = @import("evaluator.zig");
+    _ = @import("lexer.zig");
+    _ = @import("object.zig");
+    _ = @import("parser.zig");
+    _ = @import("repl.zig");
+    _ = @import("token.zig");
+}
