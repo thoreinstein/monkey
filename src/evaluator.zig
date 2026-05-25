@@ -17,7 +17,8 @@ pub fn eval(node: ast.Node) ?object.Object {
         },
         .expression => |e| {
             switch (e) {
-                .integer_literal => |il| return .{ .integer = object.Integer{ .value = il.value } },
+                .integer_literal => |il| return .{ .integer = .{ .value = il.value } },
+                .boolean_expression => |be| return .{ .boolean = .{ .value = be.value } },
                 else => return null,
             }
         },
@@ -51,6 +52,25 @@ test "integer expressions" {
     }
 }
 
+test "boolean expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: bool,
+    }{
+        .{ .input = "true", .expected = true },
+        .{ .input = "false", .expected = false },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+
+        try testBooleanObject(evaluated, t.expected);
+    }
+}
+
 fn testEval(allocator: std.mem.Allocator, input: []const u8) !?object.Object {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
@@ -65,6 +85,18 @@ fn testIntegerObject(obj: object.Object, expected: i64) !void {
         .integer => |i| i,
         else => {
             std.debug.print("obj is not Integer. got={s}\n", .{@tagName(obj)});
+            return error.WrongExpressionType;
+        },
+    };
+
+    try testing.expectEqual(expected, result.value);
+}
+
+fn testBooleanObject(obj: object.Object, expected: bool) !void {
+    const result = switch (obj) {
+        .boolean => |b| b,
+        else => {
+            std.debug.print("obj is not Boolean. got={s}\n", .{@tagName(obj)});
             return error.WrongExpressionType;
         },
     };
