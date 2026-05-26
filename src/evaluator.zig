@@ -58,7 +58,20 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
 
                     return try evalInfixExpression(allocator, ie.operator, left, right);
                 },
-                else => return null,
+                .function_literal => |f| {
+                    return .{ .function = .{ .parameters = f.parameters, .body = f.body.?, .env = env } };
+                },
+                .call_expression => |ce| {
+                    const function = try eval(allocator, .{ .expression = ce.function.?.* }, env) orelse return null;
+
+                    if (isError(function)) return function;
+
+                    const args = try evalExpressions(allocator, ce.arguments, env) orelse return null;
+
+                    if (args.items.len == 1 and isError(args.items[0])) return args.items[0];
+
+                    return applyFunction(allocator, function, args);
+                },
             }
         },
     }
@@ -206,6 +219,53 @@ fn evalIfExpression(allocator: std.mem.Allocator, exp: ast.IfExpression, env: *E
     if (exp.alternative) |a| return try eval(allocator, .{ .statement = .{ .block_statement = a } }, env);
 
     return .{ .null_ = .{} };
+}
+
+fn evalExpressions(allocator: std.mem.Allocator, exps: std.ArrayList(*ast.Expression), env: *Environment) !?std.ArrayList(object.Object) {
+    var result = std.ArrayList(object.Object).empty;
+
+    for (exps.items) |exp| {
+        const evaluated = try eval(allocator, .{ .expression = exp.* }, env) orelse return null;
+
+        if (isError(evaluated)) {
+            result.clearRetainingCapacity();
+            try result.append(allocator, evaluated);
+            return result;
+        }
+
+        try result.append(allocator, evaluated);
+    }
+
+    return result;
+}
+
+fn applyFunction(allocator: std.mem.Allocator, func: object.Object, args: std.ArrayList(object.Object)) !?object.Object {
+    switch (func) {
+        .function => |f| {
+            const extendedEnv = try extendFunctionEnv(allocator, f, args);
+            const evaluated = try eval(allocator, .{ .statement = .{ .block_statement = f.body } }, extendedEnv) orelse return null;
+
+            return switch (evaluated) {
+                .return_value => |rv| rv.value.*,
+                else => evaluated,
+            };
+        },
+        else => {
+            const msg = try std.fmt.allocPrint(allocator, "not a function: {s}", .{func.kind()});
+            return .{ .error_ = .{ .message = msg } };
+        },
+    }
+}
+
+fn extendFunctionEnv(allocator: std.mem.Allocator, func: object.Function, args: std.ArrayList(object.Object)) !*Environment {
+    var env = try allocator.create(Environment);
+    env.* = Environment.initEnclosedEnvironment(allocator, func.env);
+
+    for (func.parameters.items, 0..) |param, i| {
+        _ = try env.set(param.value, args.items[i]);
+    }
+
+    return env;
 }
 
 fn isTruthy(obj: object.Object) bool {
@@ -459,6 +519,85 @@ test "let statements" {
 
         try testIntegerObject(evaluated, t.expected);
     }
+}
+
+test "functions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    var buf: [64]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+
+    const input = "fn(x) { x + 2; };";
+
+    const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
+
+    const fun_obj = switch (evaluated) {
+        .function => |f| f,
+        else => {
+            std.debug.print("obj is not Function. got={s}\n", .{@tagName(evaluated)});
+            return error.WrongExpressionType;
+        },
+    };
+
+    try testing.expectEqual(1, fun_obj.parameters.items.len);
+
+    try fun_obj.parameters.items[0].write(&w);
+    try testing.expectEqualStrings("x", w.buffered());
+
+    w = std.Io.Writer.fixed(&buf);
+    try fun_obj.body.write(&w);
+    try testing.expectEqualStrings("(x + 2)", w.buffered());
+}
+
+test "function calling" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: i64,
+    }{
+        .{ .input = "let identity = fn(x) { x; }; identity(5);", .expected = 5 },
+        .{ .input = "let identity = fn(x) { return x; }; identity(5);", .expected = 5 },
+        .{ .input = "let double = fn(x) { x * 2; }; double(5);", .expected = 10 },
+        .{ .input = "let add = fn(x, y) { x + y; }; add(5, 5);", .expected = 10 },
+        .{ .input = "let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));", .expected = 20 },
+        .{ .input = "fn(x) { x; }(5)", .expected = 5 },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
+
+        try testIntegerObject(evaluated, t.expected);
+    }
+}
+
+test "closures" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const input =
+        \\let newAdder = fn(x) {
+        \\  fn(y) { x + y };
+        \\};
+        \\
+        \\let addTwo = newAdder(2);
+        \\addTwo(2);
+    ;
+
+    const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
+
+    try testIntegerObject(evaluated, 4);
 }
 
 fn testEval(allocator: std.mem.Allocator, input: []const u8, env: *Environment) !?object.Object {
