@@ -1,20 +1,21 @@
 const std = @import("std");
 const testing = std.testing;
 
-const object = @import("object.zig");
+const Environment = @import("environment.zig");
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
 const ast = @import("ast.zig");
+const object = @import("object.zig");
 
-pub fn eval(allocator: std.mem.Allocator, node: ast.Node) error{OutOfMemory}!?object.Object {
+pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) error{OutOfMemory}!?object.Object {
     switch (node) {
-        .program => |p| return try evalProgram(allocator, p),
+        .program => |p| return try evalProgram(allocator, p, env),
         .statement => |s| {
             switch (s) {
-                .expression_statement => |es| return try eval(allocator, .{ .expression = es.expression.?.* }),
-                .block_statement => |bs| return try evalBlockStatement(allocator, bs),
+                .expression_statement => |es| return try eval(allocator, .{ .expression = es.expression.?.* }, env),
+                .block_statement => |bs| return try evalBlockStatement(allocator, bs, env),
                 .return_statement => |rs| {
-                    const value = try eval(allocator, .{ .expression = rs.return_value.?.* }) orelse return null;
+                    const value = try eval(allocator, .{ .expression = rs.return_value.?.* }, env) orelse return null;
 
                     if (isError(value)) return value;
 
@@ -22,27 +23,36 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node) error{OutOfMemory}!?ob
                     ptr.* = value;
                     return .{ .return_value = .{ .value = ptr } };
                 },
-                else => return null,
+                .let_statement => |ls| {
+                    const value = try eval(allocator, .{ .expression = ls.value.?.* }, env) orelse return null;
+
+                    if (isError(value)) return value;
+
+                    _ = try env.set(ls.name.value, value);
+
+                    return null;
+                },
             }
         },
         .expression => |e| {
             switch (e) {
                 .integer_literal => |il| return .{ .integer = .{ .value = il.value } },
                 .boolean_expression => |be| return .{ .boolean = .{ .value = be.value } },
-                .if_expression => |ie| return try evalIfExpression(allocator, ie),
+                .if_expression => |ie| return try evalIfExpression(allocator, ie, env),
+                .identifier_expression => |ie| return try evalIdentifier(allocator, ie, env),
                 .prefix_expression => |pe| {
-                    const right = try eval(allocator, .{ .expression = pe.right.?.* }) orelse return null;
+                    const right = try eval(allocator, .{ .expression = pe.right.?.* }, env) orelse return null;
 
                     if (isError(right)) return right;
 
                     return evalPrefixExpression(allocator, pe.operator, right);
                 },
                 .infix_expression => |ie| {
-                    const left = try eval(allocator, .{ .expression = ie.left.?.* }) orelse return null;
+                    const left = try eval(allocator, .{ .expression = ie.left.?.* }, env) orelse return null;
 
                     if (isError(left)) return left;
 
-                    const right = try eval(allocator, .{ .expression = ie.right.?.* }) orelse return null;
+                    const right = try eval(allocator, .{ .expression = ie.right.?.* }, env) orelse return null;
 
                     if (isError(right)) return right;
 
@@ -54,11 +64,11 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node) error{OutOfMemory}!?ob
     }
 }
 
-fn evalProgram(allocator: std.mem.Allocator, program: ast.Program) !?object.Object {
+fn evalProgram(allocator: std.mem.Allocator, program: ast.Program, env: *Environment) !?object.Object {
     var result: ?object.Object = null;
 
     for (program.statements.items) |stmt| {
-        result = try eval(allocator, .{ .statement = stmt });
+        result = try eval(allocator, .{ .statement = stmt }, env);
 
         if (result) |r| switch (r) {
             .return_value => |rv| return rv.value.*,
@@ -70,11 +80,11 @@ fn evalProgram(allocator: std.mem.Allocator, program: ast.Program) !?object.Obje
     return result;
 }
 
-fn evalStatements(allocator: std.mem.Allocator, stmts: std.ArrayList(ast.Statement)) !?object.Object {
+fn evalStatements(allocator: std.mem.Allocator, stmts: std.ArrayList(ast.Statement), env: *Environment) !?object.Object {
     var result: ?object.Object = null;
 
     for (stmts.items) |s| {
-        result = try eval(allocator, .{ .statement = s });
+        result = try eval(allocator, .{ .statement = s }, env);
 
         if (result) |r| switch (r) {
             .return_value => |rv| return rv.value.*,
@@ -85,11 +95,11 @@ fn evalStatements(allocator: std.mem.Allocator, stmts: std.ArrayList(ast.Stateme
     return result;
 }
 
-fn evalBlockStatement(allocator: std.mem.Allocator, block: ast.BlockStatement) !?object.Object {
+fn evalBlockStatement(allocator: std.mem.Allocator, block: ast.BlockStatement, env: *Environment) !?object.Object {
     var result: ?object.Object = null;
 
     for (block.statements.items) |stmt| {
-        result = try eval(allocator, .{ .statement = stmt });
+        result = try eval(allocator, .{ .statement = stmt }, env);
 
         if (result) |r| {
             if (std.mem.eql(u8, object.RETURN_VALUE_OBJ, r.kind()) or std.mem.eql(u8, object.ERROR_OBJ, r.kind())) return r;
@@ -138,6 +148,13 @@ fn evalInfixExpression(allocator: std.mem.Allocator, operator: []const u8, left:
     return .{ .error_ = .{ .message = msg } };
 }
 
+fn evalIdentifier(allocator: std.mem.Allocator, node: ast.Identifier, env: *Environment) !object.Object {
+    if (env.get(node.value)) |val| return val;
+
+    const msg = try std.fmt.allocPrint(allocator, "identifier not found: {s}", .{node.value});
+    return .{ .error_ = .{ .message = msg } };
+}
+
 fn evalBangOperatorExpression(right: object.Object) object.Object {
     return switch (right) {
         .boolean => |b| .{ .boolean = .{ .value = !b.value } },
@@ -180,13 +197,13 @@ fn evalIntegerIntegerInfixExpression(allocator: std.mem.Allocator, operator: []c
     return .{ .error_ = .{ .message = msg } };
 }
 
-fn evalIfExpression(allocator: std.mem.Allocator, exp: ast.IfExpression) !?object.Object {
-    const condition = try eval(allocator, .{ .expression = exp.condition.?.* }) orelse return null;
+fn evalIfExpression(allocator: std.mem.Allocator, exp: ast.IfExpression, env: *Environment) !?object.Object {
+    const condition = try eval(allocator, .{ .expression = exp.condition.?.* }, env) orelse return null;
 
     if (isError(condition)) return condition;
 
-    if (isTruthy(condition)) return try eval(allocator, .{ .statement = .{ .block_statement = exp.consequence.? } });
-    if (exp.alternative) |a| return try eval(allocator, .{ .statement = .{ .block_statement = a } });
+    if (isTruthy(condition)) return try eval(allocator, .{ .statement = .{ .block_statement = exp.consequence.? } }, env);
+    if (exp.alternative) |a| return try eval(allocator, .{ .statement = .{ .block_statement = a } }, env);
 
     return .{ .null_ = .{} };
 }
@@ -212,6 +229,9 @@ test "integer expressions" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
     const tests = [_]struct {
         input: []const u8,
         expected: i64,
@@ -234,7 +254,7 @@ test "integer expressions" {
     };
 
     for (tests, 0..) |t, i| {
-        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
 
         errdefer std.debug.print("test {d} failed\n", .{i});
 
@@ -245,6 +265,9 @@ test "integer expressions" {
 test "boolean expressions" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
 
     const tests = [_]struct {
         input: []const u8,
@@ -271,7 +294,7 @@ test "boolean expressions" {
     };
 
     for (tests, 0..) |t, i| {
-        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
 
         errdefer std.debug.print("test {d} failed\n", .{i});
 
@@ -282,6 +305,9 @@ test "boolean expressions" {
 test "bang operator" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
 
     const tests = [_]struct {
         input: []const u8,
@@ -296,7 +322,7 @@ test "bang operator" {
     };
 
     for (tests) |t| {
-        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
 
         try testBooleanObject(evaluated, t.expected);
     }
@@ -305,6 +331,9 @@ test "bang operator" {
 test "if/else expressions" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
 
     const tests = [_]struct {
         input: []const u8,
@@ -320,7 +349,7 @@ test "if/else expressions" {
     };
 
     for (tests) |t| {
-        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
 
         switch (t.expected) {
             .int => |i| try testIntegerObject(evaluated, i),
@@ -332,6 +361,9 @@ test "if/else expressions" {
 test "return statements" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
 
     const tests = [_]struct {
         input: []const u8,
@@ -355,7 +387,7 @@ test "return statements" {
     };
 
     for (tests) |t| {
-        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
 
         try testIntegerObject(evaluated, t.expected);
     }
@@ -364,6 +396,9 @@ test "return statements" {
 test "error handling" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
 
     const tests = [_]struct {
         input: []const u8,
@@ -375,6 +410,7 @@ test "error handling" {
         .{ .input = "true + false", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "5; true + false; 5", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "if (10 > 1) { true + false; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
+        .{ .input = "foobar", .expected = "identifier not found: foobar" },
         .{ .input =
         \\if (10 > 1) {
         \\  if (10 > 1) {
@@ -387,7 +423,7 @@ test "error handling" {
     };
 
     for (tests) |t| {
-        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
 
         const err_obj = switch (evaluated) {
             .error_ => |e| e,
@@ -401,13 +437,37 @@ test "error handling" {
     }
 }
 
-fn testEval(allocator: std.mem.Allocator, input: []const u8) !?object.Object {
+test "let statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: i64,
+    }{
+        .{ .input = "let a = 5; a;", .expected = 5 },
+        .{ .input = "let a = 5 * 5; a;", .expected = 25 },
+        .{ .input = "let a = 5; let b = a; b;", .expected = 5 },
+        .{ .input = "let a = 5; let b = a; let c = a + b + 5; c;", .expected = 15 },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
+
+        try testIntegerObject(evaluated, t.expected);
+    }
+}
+
+fn testEval(allocator: std.mem.Allocator, input: []const u8, env: *Environment) !?object.Object {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
 
     const program = try parser.parseProgram() orelse return null;
 
-    return try eval(allocator, .{ .program = program });
+    return try eval(allocator, .{ .program = program }, env);
 }
 
 fn testIntegerObject(obj: object.Object, expected: i64) !void {

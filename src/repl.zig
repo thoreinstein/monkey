@@ -1,13 +1,14 @@
 const std = @import("std");
 const io = std.Io;
 
-const Lexer = @import("lexer.zig");
+const Environment = @import("environment.zig");
 const Evaluator = @import("evaluator.zig");
+const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
 
 const PROMPT = ">> ";
 
-pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?void {
+pub fn start(allocator: std.mem.Allocator, env: *Environment, in: *io.Reader, out: *io.Writer) !?void {
     while (true) {
         try out.writeAll(PROMPT);
         try out.flush();
@@ -17,10 +18,13 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             else => return err,
         };
 
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+
         in.toss(1);
 
         const lexer = Lexer.init(line);
-        var parser = try Parser.init(allocator, lexer);
+        var parser = try Parser.init(arena.allocator(), lexer);
 
         const program = try parser.parseProgram() orelse return null;
 
@@ -30,7 +34,10 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             continue;
         }
 
-        const evaluated = try Evaluator.eval(allocator, .{ .program = program }) orelse return null;
+        const evaluated = try Evaluator.eval(allocator, .{ .program = program }, env) orelse {
+            try out.flush();
+            continue;
+        };
 
         const rendered = try evaluated.inspect(allocator);
 

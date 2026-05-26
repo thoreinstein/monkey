@@ -1,6 +1,7 @@
 const std = @import("std");
 const io = std.Io;
 
+const Environment = @import("environment.zig");
 const repl = @import("repl.zig");
 
 pub fn main(init: std.process.Init) !void {
@@ -8,11 +9,14 @@ pub fn main(init: std.process.Init) !void {
     var out_w = io.File.stdout().writer(init.io, &out_buf);
     const out = &out_w.interface;
 
+    var env = Environment.init(init.gpa);
+    defer env.deinit();
+
     var in_buf: [4096]u8 = undefined;
     var in_r = io.File.stdin().reader(init.io, &in_buf);
     const in = &in_r.interface;
 
-    _ = try repl.start(init.gpa, in, out);
+    _ = try repl.start(init.gpa, &env, in, out);
 }
 
 test {
