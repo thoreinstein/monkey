@@ -30,7 +30,7 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             continue;
         }
 
-        const evaluated = Evaluator.eval(.{ .program = program }) orelse return null;
+        const evaluated = try Evaluator.eval(allocator, .{ .program = program }) orelse return null;
 
         const rendered = try evaluated.inspect(allocator);
 

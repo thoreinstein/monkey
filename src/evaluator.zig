@@ -16,6 +16,8 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node) error{OutOfMemory}!?ob
                 .return_statement => |rs| {
                     const value = try eval(allocator, .{ .expression = rs.return_value.?.* }) orelse return null;
 
+                    if (isError(value)) return value;
+
                     const ptr = try allocator.create(object.Object);
                     ptr.* = value;
                     return .{ .return_value = .{ .value = ptr } };
@@ -31,13 +33,20 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node) error{OutOfMemory}!?ob
                 .prefix_expression => |pe| {
                     const right = try eval(allocator, .{ .expression = pe.right.?.* }) orelse return null;
 
-                    return evalPrefixExpression(pe.operator, right);
+                    if (isError(right)) return right;
+
+                    return evalPrefixExpression(allocator, pe.operator, right);
                 },
                 .infix_expression => |ie| {
                     const left = try eval(allocator, .{ .expression = ie.left.?.* }) orelse return null;
+
+                    if (isError(left)) return left;
+
                     const right = try eval(allocator, .{ .expression = ie.right.?.* }) orelse return null;
 
-                    return evalInfixExpression(ie.operator, left, right);
+                    if (isError(right)) return right;
+
+                    return try evalInfixExpression(allocator, ie.operator, left, right);
                 },
                 else => return null,
             }
@@ -53,6 +62,7 @@ fn evalProgram(allocator: std.mem.Allocator, program: ast.Program) !?object.Obje
 
         if (result) |r| switch (r) {
             .return_value => |rv| return rv.value.*,
+            .error_ => return result,
             else => {},
         };
     }
@@ -82,29 +92,50 @@ fn evalBlockStatement(allocator: std.mem.Allocator, block: ast.BlockStatement) !
         result = try eval(allocator, .{ .statement = stmt });
 
         if (result) |r| {
-            if (std.mem.eql(u8, object.RETURN_VALUE_OBJ, r.kind())) return r;
+            if (std.mem.eql(u8, object.RETURN_VALUE_OBJ, r.kind()) or std.mem.eql(u8, object.ERROR_OBJ, r.kind())) return r;
         }
     }
 
     return result;
 }
 
-fn evalPrefixExpression(operator: []const u8, right: object.Object) ?object.Object {
+fn evalPrefixExpression(allocator: std.mem.Allocator, operator: []const u8, right: object.Object) !?object.Object {
     if (std.mem.eql(u8, "!", operator)) return evalBangOperatorExpression(right);
-    if (std.mem.eql(u8, "-", operator)) return evalMinusOperatorExpression(right);
+    if (std.mem.eql(u8, "-", operator)) return try evalMinusOperatorExpression(allocator, right);
 
-    return null;
+    const msg = try std.fmt.allocPrint(allocator, "unknown operator: {s}{s}", .{
+        operator,
+        right.kind(),
+    });
+
+    return .{ .error_ = .{ .message = msg } };
 }
 
-fn evalInfixExpression(operator: []const u8, left: object.Object, right: object.Object) object.Object {
+fn evalInfixExpression(allocator: std.mem.Allocator, operator: []const u8, left: object.Object, right: object.Object) !object.Object {
     if (std.mem.eql(u8, object.INTEGER_OBJ, left.kind()) and std.mem.eql(u8, object.INTEGER_OBJ, right.kind())) {
-        return evalIntegerIntegerInfixExpression(operator, left, right);
+        return try evalIntegerIntegerInfixExpression(allocator, operator, left, right);
     }
 
     if (std.mem.eql(u8, "==", operator)) return .{ .boolean = .{ .value = std.meta.eql(left, right) } };
     if (std.mem.eql(u8, "!=", operator)) return .{ .boolean = .{ .value = !std.meta.eql(left, right) } };
 
-    return .{ .null_ = .{} };
+    if (!std.mem.eql(u8, left.kind(), right.kind())) {
+        const msg = try std.fmt.allocPrint(allocator, "type mismatch: {s} {s} {s}", .{
+            left.kind(),
+            operator,
+            right.kind(),
+        });
+
+        return .{ .error_ = .{ .message = msg } };
+    }
+
+    const msg = try std.fmt.allocPrint(allocator, "unknown operator: {s} {s} {s}", .{
+        left.kind(),
+        operator,
+        right.kind(),
+    });
+
+    return .{ .error_ = .{ .message = msg } };
 }
 
 fn evalBangOperatorExpression(right: object.Object) object.Object {
@@ -115,13 +146,19 @@ fn evalBangOperatorExpression(right: object.Object) object.Object {
     };
 }
 
-fn evalMinusOperatorExpression(right: object.Object) object.Object {
-    if (!std.mem.eql(u8, object.INTEGER_OBJ, right.kind())) return .{ .null_ = .{} };
+fn evalMinusOperatorExpression(allocator: std.mem.Allocator, right: object.Object) !object.Object {
+    if (!std.mem.eql(u8, object.INTEGER_OBJ, right.kind())) {
+        const msg = try std.fmt.allocPrint(allocator, "unknown operator: -{s}", .{
+            right.kind(),
+        });
+
+        return .{ .error_ = .{ .message = msg } };
+    }
 
     return .{ .integer = .{ .value = -right.integer.value } };
 }
 
-fn evalIntegerIntegerInfixExpression(operator: []const u8, left: object.Object, right: object.Object) object.Object {
+fn evalIntegerIntegerInfixExpression(allocator: std.mem.Allocator, operator: []const u8, left: object.Object, right: object.Object) !object.Object {
     const leftVal = left.integer.value;
     const rightVal = right.integer.value;
 
@@ -134,11 +171,19 @@ fn evalIntegerIntegerInfixExpression(operator: []const u8, left: object.Object, 
     if (std.mem.eql(u8, "==", operator)) return .{ .boolean = .{ .value = leftVal == rightVal } };
     if (std.mem.eql(u8, "!=", operator)) return .{ .boolean = .{ .value = leftVal != rightVal } };
 
-    return .{ .null_ = .{} };
+    const msg = try std.fmt.allocPrint(allocator, "unknown operator: {s} {s} {s}", .{
+        left.kind(),
+        operator,
+        right.kind(),
+    });
+
+    return .{ .error_ = .{ .message = msg } };
 }
 
 fn evalIfExpression(allocator: std.mem.Allocator, exp: ast.IfExpression) !?object.Object {
     const condition = try eval(allocator, .{ .expression = exp.condition.?.* }) orelse return null;
+
+    if (isError(condition)) return condition;
 
     if (isTruthy(condition)) return try eval(allocator, .{ .statement = .{ .block_statement = exp.consequence.? } });
     if (exp.alternative) |a| return try eval(allocator, .{ .statement = .{ .block_statement = a } });
@@ -152,6 +197,10 @@ fn isTruthy(obj: object.Object) bool {
         .boolean => |b| if (b.value) true else false,
         else => true,
     };
+}
+
+fn isError(obj: object.Object) bool {
+    return std.mem.eql(u8, object.ERROR_OBJ, obj.kind());
 }
 
 const Expected = union(enum) {
@@ -309,6 +358,46 @@ test "return statements" {
         const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
 
         try testIntegerObject(evaluated, t.expected);
+    }
+}
+
+test "error handling" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: []const u8,
+    }{
+        .{ .input = "5 + true;", .expected = "type mismatch: INTEGER + BOOLEAN" },
+        .{ .input = "5 + true; 5;", .expected = "type mismatch: INTEGER + BOOLEAN" },
+        .{ .input = "-true", .expected = "unknown operator: -BOOLEAN" },
+        .{ .input = "true + false", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
+        .{ .input = "5; true + false; 5", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
+        .{ .input = "if (10 > 1) { true + false; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
+        .{ .input =
+        \\if (10 > 1) {
+        \\  if (10 > 1) {
+        \\    return true + false;
+        \\  }
+        \\
+        \\  return 1;
+        \\}
+        , .expected = "unknown operator: BOOLEAN + BOOLEAN" },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input) orelse return error.NoEval;
+
+        const err_obj = switch (evaluated) {
+            .error_ => |e| e,
+            else => {
+                std.debug.print("obj is not Error. got={s}\n", .{@tagName(evaluated)});
+                return error.WrongExpressionType;
+            },
+        };
+
+        try testing.expectEqualStrings(t.expected, err_obj.message);
     }
 }
 
