@@ -39,6 +39,8 @@ pub const TokenKind = enum {
     rparen,
     lbrace,
     rbrace,
+    lbracket,
+    rbracket,
 
     // keywords
     function,

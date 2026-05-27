@@ -58,6 +58,7 @@ pub const Expression = union(enum) {
     integer_literal: IntegerLiteral,
     function_literal: FunctionLiteral,
     string_literal: StringLiteral,
+    array_literal: ArrayLiteral,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
@@ -321,6 +322,26 @@ pub const StringLiteral = struct {
 
     pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         try out.writeAll(self.value);
+    }
+};
+
+pub const ArrayLiteral = struct {
+    const Self = @This();
+
+    token: token.Token,
+    elements: std.ArrayList(*Expression),
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.writeByte('[');
+        for (self.elements.items, 0..) |p, i| {
+            if (i != 0) try out.writeAll(", ");
+            try p.write(out);
+        }
+        try out.writeByte(']');
     }
 };
 

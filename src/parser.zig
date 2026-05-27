@@ -48,6 +48,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerPrefix(.if_, Self.parseIfExpression);
     try parser.registerPrefix(.function, Self.parseFunctionLiteral);
     try parser.registerPrefix(.string, Self.parseStringLiteral);
+    try parser.registerPrefix(.lbracket, Self.parseArrayLiteral);
 
     try parser.registerInfix(.plus, Self.parseInfixExpression);
     try parser.registerInfix(.minus, Self.parseInfixExpression);
@@ -316,6 +317,46 @@ fn parseStringLiteral(self: *Self) !?*ast.Expression {
     new.* = .{ .string_literal = .{ .token = self.current_token, .value = self.current_token.literal } };
 
     return new;
+}
+
+fn parseArrayLiteral(self: *Self) !?*ast.Expression {
+    const new = try self.allocator.create(ast.Expression);
+
+    const elements = try self.parseExpressionList(.rbracket) orelse return null;
+
+    new.* = .{ .array_literal = .{
+        .token = self.current_token,
+        .elements = elements,
+    } };
+
+    return new;
+}
+
+fn parseExpressionList(self: *Self, end: token.TokenKind) !?std.ArrayList(*ast.Expression) {
+    var list = std.ArrayList(*ast.Expression).empty;
+
+    if (self.peekTokenIs(end)) {
+        self.nextToken();
+
+        return list;
+    }
+
+    self.nextToken();
+
+    const exp = try self.parseExpression(.lowest) orelse return null;
+    try list.append(self.allocator, exp);
+
+    while (self.peekTokenIs(.comma)) {
+        self.nextToken();
+        self.nextToken();
+
+        const e = try self.parseExpression(.lowest) orelse return null;
+        try list.append(self.allocator, e);
+    }
+
+    if (!(try self.expectPeek(end))) return null;
+
+    return list;
 }
 
 fn parseBoolean(self: *const Self) !?*ast.Expression {
@@ -953,6 +994,30 @@ test "string literals" {
     };
 
     try testing.expectEqualStrings("hello world", str_lit.value);
+}
+
+test "array literals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const input = "[1, 2 * 2, 3 + 3]";
+
+    const program = try parseAndCheckProgram(allocator, input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const array_lit = switch (expr_stmt.expression.?.*) {
+        .array_literal => |al| al,
+        else => {
+            std.debug.print("stmt not ArrayLiteral. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testIntegerLiteral(array_lit.elements.items[0], 1);
+    try testInfixExpression(array_lit.elements.items[1], .{ .int = 2 }, "*", .{ .int = 2 });
+    try testInfixExpression(array_lit.elements.items[2], .{ .int = 3 }, "+", .{ .int = 3 });
 }
 
 fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8, size: usize) !ast.Program {
