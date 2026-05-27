@@ -4,7 +4,9 @@ const testing = std.testing;
 const Environment = @import("environment.zig");
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
+
 const ast = @import("ast.zig");
+const builtins = @import("builtins.zig").builtins;
 const object = @import("object.zig");
 
 pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) error{OutOfMemory}!?object.Object {
@@ -169,6 +171,8 @@ fn evalInfixExpression(allocator: std.mem.Allocator, operator: []const u8, left:
 fn evalIdentifier(allocator: std.mem.Allocator, node: ast.Identifier, env: *Environment) !object.Object {
     if (env.get(node.value)) |val| return val;
 
+    if (builtins.get(node.value)) |b| return .{ .builtin = b };
+
     const msg = try std.fmt.allocPrint(allocator, "identifier not found: {s}", .{node.value});
     return .{ .error_ = .{ .message = msg } };
 }
@@ -274,6 +278,7 @@ fn applyFunction(allocator: std.mem.Allocator, func: object.Object, args: std.Ar
                 else => evaluated,
             };
         },
+        .builtin => |b| return b.func(allocator, args.items),
         else => {
             const msg = try std.fmt.allocPrint(allocator, "not a function: {s}", .{func.kind()});
             return .{ .error_ = .{ .message = msg } };
@@ -307,6 +312,7 @@ fn isError(obj: object.Object) bool {
 const Expected = union(enum) {
     int: i64,
     null_: void,
+    error_: []const u8,
 };
 
 test "integer expressions" {
@@ -438,6 +444,7 @@ test "if/else expressions" {
         switch (t.expected) {
             .int => |i| try testIntegerObject(evaluated, i),
             .null_ => try testNullObject(evaluated),
+            else => return error.WrongExpectedType,
         }
     }
 }
@@ -667,6 +674,45 @@ test "string concatenation" {
     };
 
     try testing.expectEqualStrings("Hello World!", str_obj.value);
+}
+
+test "builtin functions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: Expected,
+    }{
+        .{ .input = "len(\"\")", .expected = .{ .int = 0 } },
+        .{ .input = "len(\"four\")", .expected = .{ .int = 4 } },
+        .{ .input = "len(\"hello world\")", .expected = .{ .int = 11 } },
+        .{ .input = "len(1)", .expected = .{ .error_ = "argument to `len` not supported, got=INTEGER" } },
+        .{ .input = "len(\"one\", \"two\")", .expected = .{ .error_ = "wrong number of arguments. got=2, want=1" } },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
+
+        switch (t.expected) {
+            .int => |i| try testIntegerObject(evaluated, i),
+            .error_ => |e| {
+                const err_obj = switch (evaluated) {
+                    .error_ => |err| err,
+                    else => {
+                        std.debug.print("obj is not Error. got={s}", .{@tagName(evaluated)});
+                        return error.WrongExpressionType;
+                    },
+                };
+
+                try testing.expectEqualStrings(e, err_obj.message);
+            },
+            else => return error.WrongExpectedType,
+        }
+    }
 }
 
 fn testEval(allocator: std.mem.Allocator, input: []const u8, env: *Environment) !?object.Object {

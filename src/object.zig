@@ -10,6 +10,9 @@ pub const RETURN_VALUE_OBJ = "RETURN_VALUE";
 pub const ERROR_OBJ = "ERROR";
 pub const FUNCTION_OBJ = "FUNCTION";
 pub const STRING_OBJ = "STRING";
+pub const BUILTIN_OBJ = "BUILTIN";
+
+const BuiltinFunction = *const fn (allocator: std.mem.Allocator, args: []Object) error{OutOfMemory}!?Object;
 
 pub const Object = union(enum) {
     const Self = @This();
@@ -21,6 +24,7 @@ pub const Object = union(enum) {
     error_: Error,
     function: Function,
     string: String,
+    builtin: Builtin,
 
     pub fn kind(self: Self) []const u8 {
         return switch (self) {
@@ -149,10 +153,30 @@ pub const String = struct {
 
     pub fn kind(self: *const Self) []const u8 {
         _ = self;
+
         return STRING_OBJ;
     }
 
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{s}", .{self.value});
+    }
+};
+
+pub const Builtin = struct {
+    const Self = @This();
+
+    func: BuiltinFunction,
+
+    pub fn kind(self: *const Self) []const u8 {
+        _ = self;
+
+        return BUILTIN_OBJ;
+    }
+
+    pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        _ = self;
+        _ = allocator;
+
+        return "builtin function";
     }
 };
