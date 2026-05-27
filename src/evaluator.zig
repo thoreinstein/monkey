@@ -37,6 +37,7 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
         .expression => |e| {
             switch (e) {
                 .integer_literal => |il| return .{ .integer = .{ .value = il.value } },
+                .string_literal => |s| return .{ .string = .{ .value = s.value } },
                 .boolean_expression => |be| return .{ .boolean = .{ .value = be.value } },
                 .if_expression => |ie| return try evalIfExpression(allocator, ie, env),
                 .identifier_expression => |ie| return try evalIdentifier(allocator, ie, env),
@@ -598,6 +599,28 @@ test "closures" {
     const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
 
     try testIntegerObject(evaluated, 4);
+}
+
+test "string literals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const input = "\"Hello World!\"";
+
+    const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
+
+    const str_obj = switch (evaluated) {
+        .string => |s| s,
+        else => {
+            std.debug.print("obj is not String. got={s}\n", .{@tagName(evaluated)});
+            return error.WrongExpressionType;
+        },
+    };
+
+    try testing.expectEqualStrings("Hello World!", str_obj.value);
 }
 
 fn testEval(allocator: std.mem.Allocator, input: []const u8, env: *Environment) !?object.Object {

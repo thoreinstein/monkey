@@ -35,6 +35,7 @@ pub fn nextToken(self: *Self) token.Token {
         '+' => .{ .kind = .plus, .literal = "+" },
         '{' => .{ .kind = .lbrace, .literal = "{" },
         '}' => .{ .kind = .rbrace, .literal = "}" },
+        '"' => .{ .kind = .string, .literal = self.readString() },
         0 => .{ .kind = .eof, .literal = "" },
         '=' => blk: {
             if (self.peekChar() == '=') {
@@ -99,6 +100,16 @@ fn readChar(self: *Self) void {
     self.read_position += 1;
 }
 
+fn readString(self: *Self) []const u8 {
+    const position = self.position + 1;
+
+    self.readChar();
+
+    while (self.ch != '"' and self.ch != 0) self.readChar();
+
+    return self.input[position..self.position];
+}
+
 fn peekChar(self: *const Self) u8 {
     return if (self.read_position >= self.input.len) 0 else self.input[self.read_position];
 }
@@ -136,6 +147,8 @@ test "next token" {
         \\
         \\10 == 10;
         \\10 != 9;
+        \\"foobar"
+        \\"foo bar"
     ;
 
     const tests = [_]struct {
@@ -215,6 +228,9 @@ test "next token" {
         .{ .kind = .not_eq, .literal = "!=" },
         .{ .kind = .int, .literal = "9" },
         .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .string, .literal = "foobar" },
+        .{ .kind = .string, .literal = "foo bar" },
+        .{ .kind = .eof, .literal = "" },
     };
 
     var lexer = init(input);

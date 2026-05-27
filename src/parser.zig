@@ -47,6 +47,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerPrefix(.lparen, Self.parseGroupedExpression);
     try parser.registerPrefix(.if_, Self.parseIfExpression);
     try parser.registerPrefix(.function, Self.parseFunctionLiteral);
+    try parser.registerPrefix(.string, Self.parseStringLiteral);
 
     try parser.registerInfix(.plus, Self.parseInfixExpression);
     try parser.registerInfix(.minus, Self.parseInfixExpression);
@@ -305,6 +306,14 @@ fn parseIntegerLiteral(self: *Self) !?*ast.Expression {
     new.* = .{
         .integer_literal = literal,
     };
+
+    return new;
+}
+
+fn parseStringLiteral(self: *Self) !?*ast.Expression {
+    const new = try self.allocator.create(ast.Expression);
+
+    new.* = .{ .string_literal = .{ .token = self.current_token, .value = self.current_token.literal } };
 
     return new;
 }
@@ -922,6 +931,28 @@ test "operator precedence" {
 
         try testing.expectEqualStrings(t.expected, w.buffered());
     }
+}
+
+test "string literals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const input = "\"hello world\"";
+
+    const program = try parseAndCheckProgram(allocator, input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const str_lit = switch (expr_stmt.expression.?.*) {
+        .string_literal => |sl| sl,
+        else => {
+            std.debug.print("stmt not StringLiteral. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqualStrings("hello world", str_lit.value);
 }
 
 fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8, size: usize) !ast.Program {

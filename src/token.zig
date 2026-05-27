@@ -17,6 +17,7 @@ pub const TokenKind = enum {
     // identifiers and literals
     ident,
     int,
+    string,
 
     // operators
     assign,
