@@ -140,6 +140,10 @@ fn evalInfixExpression(allocator: std.mem.Allocator, operator: []const u8, left:
         return try evalIntegerIntegerInfixExpression(allocator, operator, left, right);
     }
 
+    if (std.mem.eql(u8, object.STRING_OBJ, left.kind()) and std.mem.eql(u8, object.STRING_OBJ, right.kind())) {
+        return try evalStringInfixExpression(allocator, operator, left, right);
+    }
+
     if (std.mem.eql(u8, "==", operator)) return .{ .boolean = .{ .value = std.meta.eql(left, right) } };
     if (std.mem.eql(u8, "!=", operator)) return .{ .boolean = .{ .value = !std.meta.eql(left, right) } };
 
@@ -187,6 +191,25 @@ fn evalMinusOperatorExpression(allocator: std.mem.Allocator, right: object.Objec
     }
 
     return .{ .integer = .{ .value = -right.integer.value } };
+}
+
+fn evalStringInfixExpression(allocator: std.mem.Allocator, operator: []const u8, left: object.Object, right: object.Object) !object.Object {
+    if (!std.mem.eql(u8, "+", operator)) {
+        const msg = try std.fmt.allocPrint(allocator, "unknown operator: {s} {s} {s}", .{
+            left.kind(),
+            operator,
+            right.kind(),
+        });
+
+        return .{ .error_ = .{ .message = msg } };
+    }
+
+    const leftVal = left.string.value;
+    const rightVal = right.string.value;
+
+    const val = try std.mem.concat(allocator, u8, &.{ leftVal, rightVal });
+
+    return .{ .string = .{ .value = val } };
 }
 
 fn evalIntegerIntegerInfixExpression(allocator: std.mem.Allocator, operator: []const u8, left: object.Object, right: object.Object) !object.Object {
@@ -472,6 +495,7 @@ test "error handling" {
         .{ .input = "5; true + false; 5", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "if (10 > 1) { true + false; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "foobar", .expected = "identifier not found: foobar" },
+        .{ .input = "\"Hello\" - \"World\"", .expected = "unknown operator: STRING - STRING" },
         .{ .input =
         \\if (10 > 1) {
         \\  if (10 > 1) {
@@ -609,6 +633,28 @@ test "string literals" {
     defer env.deinit();
 
     const input = "\"Hello World!\"";
+
+    const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
+
+    const str_obj = switch (evaluated) {
+        .string => |s| s,
+        else => {
+            std.debug.print("obj is not String. got={s}\n", .{@tagName(evaluated)});
+            return error.WrongExpressionType;
+        },
+    };
+
+    try testing.expectEqualStrings("Hello World!", str_obj.value);
+}
+
+test "string concatenation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const input = "\"Hello\" + \" \"  + \"World!\"";
 
     const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
 
