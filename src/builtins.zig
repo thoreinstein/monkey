@@ -5,6 +5,7 @@ const object = @import("object.zig");
 pub const builtins = std.StaticStringMap(object.Builtin).initComptime(.{
     .{ "len", object.Builtin{ .func = lenBuiltin } },
     .{ "first", object.Builtin{ .func = firstBuiltin } },
+    .{ "last", object.Builtin{ .func = lastBuiltin } },
 });
 
 fn lenBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?object.Object {
@@ -44,6 +45,24 @@ fn firstBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?obj
 
         else => {
             const msg = try std.fmt.allocPrint(allocator, "argument to `first` must be ARRAY, got={s}", .{args[0].kind()});
+            return .{ .error_ = .{ .message = msg } };
+        },
+    }
+
+    return .{ .null_ = .{} };
+}
+
+fn lastBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?object.Object {
+    if (args.len != 1) {
+        const msg = try std.fmt.allocPrint(allocator, "wrong number of arguments. got={d}, want=1", .{args.len});
+        return .{ .error_ = .{ .message = msg } };
+    }
+
+    switch (args[0]) {
+        .array => |a| return a.elements.getLast(),
+
+        else => {
+            const msg = try std.fmt.allocPrint(allocator, "argument to `last` must be ARRAY, got={s}", .{args[0].kind()});
             return .{ .error_ = .{ .message = msg } };
         },
     }
