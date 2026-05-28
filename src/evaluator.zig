@@ -734,6 +734,7 @@ test "builtin functions" {
         .{ .input = "first(1)", .expected = .{ .error_ = "argument to `first` must be ARRAY, got=INTEGER" } },
         .{ .input = "last([1, 2, 3])", .expected = .{ .int = 3 } },
         .{ .input = "last(1)", .expected = .{ .error_ = "argument to `last` must be ARRAY, got=INTEGER" } },
+        .{ .input = "rest(1)", .expected = .{ .error_ = "argument to `rest` must be ARRAY, got=INTEGER" } },
     };
 
     for (tests) |t| {
