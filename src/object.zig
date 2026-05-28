@@ -1,4 +1,5 @@
 const std = @import("std");
+const testing = std.testing;
 
 const Environment = @import("environment.zig");
 const ast = @import("ast.zig");
@@ -12,8 +13,15 @@ pub const FUNCTION_OBJ = "FUNCTION";
 pub const STRING_OBJ = "STRING";
 pub const BUILTIN_OBJ = "BUILTIN";
 pub const ARRAY_OBJ = "ARRAY";
+pub const HASH_OBJ = "HASH";
 
 const BuiltinFunction = *const fn (allocator: std.mem.Allocator, args: []Object) error{OutOfMemory}!?Object;
+
+pub const ObjectType = enum {
+    integer,
+    boolean,
+    string,
+};
 
 pub const Object = union(enum) {
     const Self = @This();
@@ -27,6 +35,7 @@ pub const Object = union(enum) {
     string: String,
     builtin: Builtin,
     array: Array,
+    hash: Hash,
 
     pub fn kind(self: Self) []const u8 {
         return switch (self) {
@@ -37,6 +46,15 @@ pub const Object = union(enum) {
     pub fn inspect(self: Self, allocator: std.mem.Allocator) anyerror![]const u8 {
         return switch (self) {
             inline else => |s| s.inspect(allocator),
+        };
+    }
+
+    pub fn hashKey(self: Self) ?HashKey {
+        return switch (self) {
+            .integer => |i| i.hashKey(),
+            .boolean => |b| b.hashKey(),
+            .string => |s| s.hashKey(),
+            else => null,
         };
     }
 };
@@ -54,6 +72,13 @@ pub const Integer = struct {
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{d}", .{self.value});
     }
+
+    pub fn hashKey(self: Self) HashKey {
+        return .{
+            .kind = .integer,
+            .value = @bitCast(self.value),
+        };
+    }
 };
 
 pub const Boolean = struct {
@@ -68,6 +93,15 @@ pub const Boolean = struct {
 
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{}", .{self.value});
+    }
+
+    pub fn hashKey(self: Self) HashKey {
+        const value: u64 = if (self.value) 1 else 0;
+
+        return .{
+            .kind = .boolean,
+            .value = value,
+        };
     }
 };
 
@@ -162,6 +196,13 @@ pub const String = struct {
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{s}", .{self.value});
     }
+
+    pub fn hashKey(self: Self) HashKey {
+        return .{
+            .kind = .string,
+            .value = std.hash.Fnv1a_64.hash(self.value),
+        };
+    }
 };
 
 pub const Builtin = struct {
@@ -211,3 +252,86 @@ pub const Array = struct {
         return aw.toOwnedSlice();
     }
 };
+
+pub const HashKey = struct {
+    kind: ObjectType,
+    value: u64,
+};
+
+pub const HashPair = struct {
+    key: Object,
+    value: Object,
+};
+
+pub const Hash = struct {
+    const Self = @This();
+
+    pairs: std.AutoHashMap(HashKey, HashPair),
+
+    pub fn kind(self: Self) []const u8 {
+        _ = self;
+
+        return HASH_OBJ;
+    }
+
+    pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        defer aw.deinit();
+        const w = &aw.writer;
+
+        try w.writeAll("{");
+
+        var it = self.pairs.iterator();
+        var first = true;
+        while (it.next()) |entry| {
+            if (!first) try w.writeAll(", ");
+            first = false;
+
+            const pair = entry.value_ptr.*;
+
+            const ks = try pair.key.inspect(allocator);
+            defer allocator.free(ks);
+            const vs = try pair.value.inspect(allocator);
+            defer allocator.free(vs);
+
+            try w.print("{s}: {s}", .{ ks, vs });
+        }
+
+        try w.writeAll("}");
+
+        return aw.toOwnedSlice();
+    }
+};
+
+test "string hash key" {
+    const hello1: String = .{ .value = "Hello World" };
+    const hello2: String = .{ .value = "Hello World" };
+    const diff1: String = .{ .value = "My name is johnny" };
+    const diff2: String = .{ .value = "My name is johnny" };
+
+    try testing.expectEqual(hello1.hashKey().value, hello2.hashKey().value);
+    try testing.expectEqual(diff1.hashKey().value, diff2.hashKey().value);
+    try testing.expect(hello1.hashKey().value != diff1.hashKey().value);
+}
+
+test "integer hash key" {
+    const one1: Integer = .{ .value = 1 };
+    const one2: Integer = .{ .value = 1 };
+    const two1: Integer = .{ .value = 2 };
+    const two2: Integer = .{ .value = 2 };
+
+    try testing.expectEqual(one1.hashKey().value, one2.hashKey().value);
+    try testing.expectEqual(two1.hashKey().value, two2.hashKey().value);
+    try testing.expect(one1.hashKey().value != two1.hashKey().value);
+}
+
+test "boolean hash key" {
+    const true1: Boolean = .{ .value = true };
+    const true2: Boolean = .{ .value = true };
+    const false1: Boolean = .{ .value = false };
+    const false2: Boolean = .{ .value = false };
+
+    try testing.expectEqual(true1.hashKey().value, true2.hashKey().value);
+    try testing.expectEqual(false1.hashKey().value, false2.hashKey().value);
+    try testing.expect(true1.hashKey().value != false1.hashKey().value);
+}

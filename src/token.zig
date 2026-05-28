@@ -34,6 +34,7 @@ pub const TokenKind = enum {
     // delimeters
     comma,
     semicolon,
+    colon,
 
     lparen,
     rparen,

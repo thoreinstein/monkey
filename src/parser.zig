@@ -50,6 +50,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerPrefix(.function, Self.parseFunctionLiteral);
     try parser.registerPrefix(.string, Self.parseStringLiteral);
     try parser.registerPrefix(.lbracket, Self.parseArrayLiteral);
+    try parser.registerPrefix(.lbrace, Self.parseHashLiteral);
 
     try parser.registerInfix(.plus, Self.parseInfixExpression);
     try parser.registerInfix(.minus, Self.parseInfixExpression);
@@ -343,6 +344,37 @@ fn parseArrayLiteral(self: *Self) !?*ast.Expression {
         .token = self.current_token,
         .elements = elements,
     } };
+
+    return new;
+}
+
+fn parseHashLiteral(self: *Self) !?*ast.Expression {
+    var hash = ast.HashLiteral{
+        .token = self.current_token,
+        .pairs = std.ArrayList(ast.HashPair).empty,
+    };
+
+    while (!self.peekTokenIs(.rbrace)) {
+        self.nextToken();
+
+        const key = try self.parseExpression(.lowest) orelse return null;
+
+        if (!(try self.expectPeek(.colon))) return null;
+
+        self.nextToken();
+
+        const value = try self.parseExpression(.lowest) orelse return null;
+
+        try hash.pairs.append(self.allocator, .{ .key = key, .value = value });
+
+        if (!self.peekTokenIs(.rbrace) and !(try self.expectPeek(.comma))) return null;
+    }
+
+    if (!(try self.expectPeek(.rbrace))) return null;
+
+    const new = try self.allocator.create(ast.Expression);
+
+    new.* = .{ .hash_literal = hash };
 
     return new;
 }
@@ -1059,6 +1091,73 @@ test "index expressions" {
 
     try testIdentifier(index_exp.left.?, "myArray");
     try testInfixExpression(index_exp.index.?, .{ .int = 1 }, "+", .{ .int = 1 });
+}
+
+test "hash literals with string keys" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const input = "{\"one\": 1, \"two\": 2, \"three\": 3}";
+
+    const program = try parseAndCheckProgram(allocator, input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const hash_lit = switch (expr_stmt.expression.?.*) {
+        .hash_literal => |hl| hl,
+        else => {
+            std.debug.print("stmt not HashLiteral. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqual(@as(usize, 3), hash_lit.pairs.items.len);
+
+    const expected = std.StaticStringMap(i64).initComptime(.{
+        .{ "one", 1 },
+        .{ "two", 2 },
+        .{ "three", 3 },
+    });
+
+    for (hash_lit.pairs.items) |pair| {
+        const literal = switch (pair.key.*) {
+            .string_literal => |sl| sl,
+            else => {
+                std.debug.print("stmt not StringLiteral. got={s}\n", .{@tagName(pair.key.*)});
+                return error.WrongStatementType;
+            },
+        };
+
+        const expected_value = expected.get(literal.value) orelse {
+            std.debug.print("no expected value for key {s}\n", .{literal.value});
+            return error.WrongStatementType;
+        };
+
+        try testIntegerLiteral(pair.value, expected_value);
+    }
+}
+
+test "empty hash literal" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const input = "{}";
+
+    const program = try parseAndCheckProgram(allocator, input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const hash_lit = switch (expr_stmt.expression.?.*) {
+        .hash_literal => |hl| hl,
+        else => {
+            std.debug.print("stmt not HashLiteral. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqual(@as(usize, 0), hash_lit.pairs.items.len);
 }
 
 fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8, size: usize) !ast.Program {

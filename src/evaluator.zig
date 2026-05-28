@@ -43,6 +43,7 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
                 .boolean_expression => |be| return .{ .boolean = .{ .value = be.value } },
                 .if_expression => |ie| return try evalIfExpression(allocator, ie, env),
                 .identifier_expression => |ie| return try evalIdentifier(allocator, ie, env),
+                .hash_literal => |hl| return try evalHashLiteral(allocator, hl, env),
                 .prefix_expression => |pe| {
                     const right = try eval(allocator, .{ .expression = pe.right.?.* }, env) orelse return null;
 
@@ -193,6 +194,29 @@ fn evalIdentifier(allocator: std.mem.Allocator, node: ast.Identifier, env: *Envi
 
     const msg = try std.fmt.allocPrint(allocator, "identifier not found: {s}", .{node.value});
     return .{ .error_ = .{ .message = msg } };
+}
+
+fn evalHashLiteral(allocator: std.mem.Allocator, node: ast.HashLiteral, env: *Environment) !?object.Object {
+    var pairs = std.AutoHashMap(object.HashKey, object.HashPair).init(allocator);
+
+    for (node.pairs.items) |pair| {
+        const key = try eval(allocator, .{ .expression = pair.key.* }, env) orelse return null;
+
+        if (isError(key)) return key;
+
+        const hashed = key.hashKey() orelse {
+            const msg = try std.fmt.allocPrint(allocator, "unusable as hash key: {s}", .{key.kind()});
+            return .{ .error_ = .{ .message = msg } };
+        };
+
+        const value = try eval(allocator, .{ .expression = pair.value.* }, env) orelse return null;
+
+        try pairs.put(hashed, .{ .key = key, .value = value });
+    }
+
+    return .{
+        .hash = .{ .pairs = pairs },
+    };
 }
 
 fn evalBangOperatorExpression(right: object.Object) object.Object {
@@ -813,6 +837,55 @@ test "index expressions" {
             .null_ => try testNullObject(evaluated),
             else => return error.WrongExpectedType,
         }
+    }
+}
+
+test "hash literals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const input =
+        \\let two = "two";
+        \\{
+        \\  "one": 10 - 9,
+        \\  two: 1 + 1,
+        \\  "thr" + "ee": 6 / 2,
+        \\  4: 4,
+        \\  true: 5,
+        \\ false: 6
+        \\}
+    ;
+
+    const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
+
+    const expected = [_]struct { key: object.HashKey, value: i64 }{
+        .{ .key = (object.String{ .value = "one" }).hashKey(), .value = 1 },
+        .{ .key = (object.String{ .value = "two" }).hashKey(), .value = 2 },
+        .{ .key = (object.String{ .value = "three" }).hashKey(), .value = 3 },
+        .{ .key = (object.Integer{ .value = 4 }).hashKey(), .value = 4 },
+        .{ .key = (object.Boolean{ .value = true }).hashKey(), .value = 5 },
+        .{ .key = (object.Boolean{ .value = false }).hashKey(), .value = 6 },
+    };
+
+    const hash_obj = switch (evaluated) {
+        .hash => |h| h,
+        else => {
+            std.debug.print("obj is not Hash. got={s}\n", .{@tagName(evaluated)});
+            return error.WrongExpressionType;
+        },
+    };
+
+    try testing.expectEqual(@as(usize, 6), hash_obj.pairs.count());
+
+    for (expected) |e| {
+        const pair = hash_obj.pairs.get(e.key) orelse {
+            std.debug.print("no pair for given key\n", .{});
+            return error.NoPair;
+        };
+        try testIntegerObject(pair.value, e.value);
     }
 }
 

@@ -60,6 +60,7 @@ pub const Expression = union(enum) {
     function_literal: FunctionLiteral,
     string_literal: StringLiteral,
     array_literal: ArrayLiteral,
+    hash_literal: HashLiteral,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
@@ -363,6 +364,32 @@ pub const IndexExpression = struct {
         try out.writeByte('[');
         if (self.index) |i| try i.write(out);
         try out.writeAll("])");
+    }
+};
+
+pub const HashPair = struct {
+    key: *Expression,
+    value: *Expression,
+};
+
+pub const HashLiteral = struct {
+    const Self = @This();
+
+    token: token.Token,
+    pairs: std.ArrayList(HashPair),
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.writeByte('{');
+        for (self.pairs.items) |p| {
+            try p.key.write(out);
+            try out.writeAll(":");
+            try p.value.write(out);
+        }
+        try out.writeByte('}');
     }
 };
 

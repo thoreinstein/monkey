@@ -37,6 +37,7 @@ pub fn nextToken(self: *Self) token.Token {
         '}' => .{ .kind = .rbrace, .literal = "}" },
         '[' => .{ .kind = .lbracket, .literal = "[" },
         ']' => .{ .kind = .rbracket, .literal = "]" },
+        ':' => .{ .kind = .colon, .literal = ":" },
         '"' => .{ .kind = .string, .literal = self.readString() },
         0 => .{ .kind = .eof, .literal = "" },
         '=' => blk: {
@@ -152,6 +153,7 @@ test "next token" {
         \\"foobar"
         \\"foo bar"
         \\[1, 2];
+        \\{"foo": "bar"}
     ;
 
     const tests = [_]struct {
@@ -239,6 +241,11 @@ test "next token" {
         .{ .kind = .int, .literal = "2" },
         .{ .kind = .rbracket, .literal = "]" },
         .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .lbrace, .literal = "{" },
+        .{ .kind = .string, .literal = "foo" },
+        .{ .kind = .colon, .literal = ":" },
+        .{ .kind = .string, .literal = "bar" },
+        .{ .kind = .rbrace, .literal = "}" },
         .{ .kind = .eof, .literal = "" },
     };
 
