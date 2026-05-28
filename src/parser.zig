@@ -16,6 +16,7 @@ const Precedence = enum(u8) {
     product,
     prefix,
     call,
+    index,
 };
 
 const Self = @This();
@@ -59,6 +60,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerInfix(.lt, Self.parseInfixExpression);
     try parser.registerInfix(.gt, Self.parseInfixExpression);
     try parser.registerInfix(.lparen, Self.parseCallExpression);
+    try parser.registerInfix(.lbracket, Self.parseIndexExpression);
 
     parser.nextToken();
     parser.nextToken();
@@ -248,6 +250,19 @@ fn parseCallExpression(self: *Self, function: *ast.Expression) !?ast.Expression 
     return .{
         .call_expression = expression,
     };
+}
+
+fn parseIndexExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
+    var expression = ast.IndexExpression{ .token = self.current_token, .left = left };
+
+    self.nextToken();
+
+    const index = try self.parseExpression(.lowest) orelse return null;
+    expression.index = index;
+
+    if (!(try self.expectPeek(.rbracket))) return null;
+
+    return .{ .index_expression = expression };
 }
 
 fn parseCallArguments(self: *Self) !?std.ArrayList(*ast.Expression) {
@@ -527,6 +542,7 @@ fn getPrecedence(t: token.TokenKind) Precedence {
         .plus, .minus => .sum,
         .asterisk, .slash => .product,
         .lparen => .call,
+        .lbracket => .index,
         else => .lowest,
     };
 }
@@ -960,6 +976,8 @@ test "operator precedence" {
         .{ .input = "a + add(b * c) + d", .expected = "((a + add((b * c))) + d)", .size = 1 },
         .{ .input = "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", .expected = "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))", .size = 1 },
         .{ .input = "add(a + b + c * d / f + g)", .expected = "add((((a + b) + ((c * d) / f)) + g))", .size = 1 },
+        .{ .input = "a * [1, 2, 3, 4][b * c] * d", .expected = "((a * ([1, 2, 3, 4][(b * c)])) * d)", .size = 1 },
+        .{ .input = "add(a * b[2], b[1], 2 * [1, 2][1])", .expected = "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))", .size = 1 },
     };
 
     for (tests) |t| {
@@ -1018,6 +1036,29 @@ test "array literals" {
     try testIntegerLiteral(array_lit.elements.items[0], 1);
     try testInfixExpression(array_lit.elements.items[1], .{ .int = 2 }, "*", .{ .int = 2 });
     try testInfixExpression(array_lit.elements.items[2], .{ .int = 3 }, "+", .{ .int = 3 });
+}
+
+test "index expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const input = "myArray[1 + 1]";
+
+    const program = try parseAndCheckProgram(allocator, input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const index_exp = switch (expr_stmt.expression.?.*) {
+        .index_expression => |ie| ie,
+        else => {
+            std.debug.print("stmt not IndexExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testIdentifier(index_exp.left.?, "myArray");
+    try testInfixExpression(index_exp.index.?, .{ .int = 1 }, "+", .{ .int = 1 });
 }
 
 fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8, size: usize) !ast.Program {

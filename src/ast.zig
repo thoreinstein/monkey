@@ -51,6 +51,7 @@ pub const Expression = union(enum) {
     boolean_expression: BooleanExpression,
     if_expression: IfExpression,
     call_expression: CallExpression,
+    index_expression: IndexExpression,
 
     prefix_expression: PrefixExpression,
     infix_expression: InfixExpression,
@@ -342,6 +343,26 @@ pub const ArrayLiteral = struct {
             try p.write(out);
         }
         try out.writeByte(']');
+    }
+};
+
+pub const IndexExpression = struct {
+    const Self = @This();
+
+    token: token.Token,
+    left: ?*Expression = null,
+    index: ?*Expression = null,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.writeByte('(');
+        if (self.left) |l| try l.write(out);
+        try out.writeByte('[');
+        if (self.index) |i| try i.write(out);
+        try out.writeAll("])");
     }
 };
 
