@@ -11,6 +11,7 @@ pub const ERROR_OBJ = "ERROR";
 pub const FUNCTION_OBJ = "FUNCTION";
 pub const STRING_OBJ = "STRING";
 pub const BUILTIN_OBJ = "BUILTIN";
+pub const ARRAY_OBJ = "ARRAY";
 
 const BuiltinFunction = *const fn (allocator: std.mem.Allocator, args: []Object) error{OutOfMemory}!?Object;
 
@@ -25,6 +26,7 @@ pub const Object = union(enum) {
     function: Function,
     string: String,
     builtin: Builtin,
+    array: Array,
 
     pub fn kind(self: Self) []const u8 {
         return switch (self) {
@@ -178,5 +180,34 @@ pub const Builtin = struct {
         _ = allocator;
 
         return "builtin function";
+    }
+};
+
+pub const Array = struct {
+    const Self = @This();
+
+    elements: std.ArrayList(Object),
+
+    pub fn kind(self: *const Self) []const u8 {
+        _ = self;
+
+        return ARRAY_OBJ;
+    }
+
+    pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        defer aw.deinit();
+        const w = &aw.writer;
+
+        try w.writeAll("[");
+        for (self.elements.items, 0..) |e, i| {
+            if (i > 0) try w.writeAll(", ");
+            const es = try e.inspect(allocator);
+            defer allocator.free(es);
+            try w.writeAll(es);
+        }
+        try w.writeAll("]");
+
+        return aw.toOwnedSlice();
     }
 };

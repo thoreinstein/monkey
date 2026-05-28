@@ -75,6 +75,14 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
 
                     return applyFunction(allocator, function, args);
                 },
+                .array_literal => |al| {
+                    const elements = try evalExpressions(allocator, al.elements, env) orelse return null;
+
+                    if (elements.items.len == 1 and isError(elements.items[0])) return elements.items[0];
+
+                    return .{ .array = .{ .elements = elements } };
+                },
+                else => return null,
             }
         },
     }
@@ -713,6 +721,30 @@ test "builtin functions" {
             else => return error.WrongExpectedType,
         }
     }
+}
+
+test "array literals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const input = "[1, 2 * 2, 3 + 3]";
+
+    const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
+
+    const arr_lit = switch (evaluated) {
+        .array => |a| a,
+        else => {
+            std.debug.print("obj is not Array. got={s}", .{@tagName(evaluated)});
+            return error.WrongExpressionType;
+        },
+    };
+
+    try testIntegerObject(arr_lit.elements.items[0], 1);
+    try testIntegerObject(arr_lit.elements.items[1], 4);
+    try testIntegerObject(arr_lit.elements.items[2], 6);
 }
 
 fn testEval(allocator: std.mem.Allocator, input: []const u8, env: *Environment) !?object.Object {
