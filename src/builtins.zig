@@ -7,6 +7,7 @@ pub const builtins = std.StaticStringMap(object.Builtin).initComptime(.{
     .{ "first", object.Builtin{ .func = firstBuiltin } },
     .{ "last", object.Builtin{ .func = lastBuiltin } },
     .{ "rest", object.Builtin{ .func = restBuiltin } },
+    .{ "push", object.Builtin{ .func = pushBuiltin } },
 });
 
 fn lenBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?object.Object {
@@ -88,6 +89,29 @@ fn restBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?obje
         },
         else => {
             const msg = try std.fmt.allocPrint(allocator, "argument to `rest` must be ARRAY, got={s}", .{args[0].kind()});
+            return .{ .error_ = .{ .message = msg } };
+        },
+    }
+
+    return .{ .null_ = .{} };
+}
+
+fn pushBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?object.Object {
+    if (args.len != 2) {
+        const msg = try std.fmt.allocPrint(allocator, "wrong number of arguments. got={d}, want=2", .{args.len});
+        return .{ .error_ = .{ .message = msg } };
+    }
+
+    switch (args[0]) {
+        .array => |a| {
+            var new_list = std.ArrayList(object.Object).empty;
+            try new_list.appendSlice(allocator, a.elements.items);
+            try new_list.append(allocator, args[1]);
+
+            return .{ .array = .{ .elements = new_list } };
+        },
+        else => {
+            const msg = try std.fmt.allocPrint(allocator, "argument to `first` must be ARRAY, got={s}", .{args[0].kind()});
             return .{ .error_ = .{ .message = msg } };
         },
     }
