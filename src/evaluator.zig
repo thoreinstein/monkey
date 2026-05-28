@@ -730,6 +730,8 @@ test "builtin functions" {
         .{ .input = "len([1, 2, 3])", .expected = .{ .int = 3 } },
         .{ .input = "len(1)", .expected = .{ .error_ = "argument to `len` not supported, got=INTEGER" } },
         .{ .input = "len(\"one\", \"two\")", .expected = .{ .error_ = "wrong number of arguments. got=2, want=1" } },
+        .{ .input = "first([1, 2, 3])", .expected = .{ .int = 1 } },
+        .{ .input = "first(1)", .expected = .{ .error_ = "argument to `first` must be ARRAY, got=INTEGER" } },
     };
 
     for (tests) |t| {
