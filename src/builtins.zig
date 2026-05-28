@@ -15,6 +15,12 @@ fn lenBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?objec
     switch (args[0]) {
         .string => |s| {
             const size: i64 = @intCast(s.value.len);
+
+            return .{ .integer = .{ .value = size } };
+        },
+        .array => |a| {
+            const size: i64 = @intCast(a.elements.items.len);
+
             return .{ .integer = .{ .value = size } };
         },
         else => {
