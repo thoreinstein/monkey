@@ -82,7 +82,17 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
 
                     return .{ .array = .{ .elements = elements } };
                 },
-                else => return null,
+                .index_expression => |ie| {
+                    const left = try eval(allocator, .{ .expression = ie.left.?.* }, env) orelse return null;
+
+                    if (isError(left)) return left;
+
+                    const index = try eval(allocator, .{ .expression = ie.index.?.* }, env) orelse return null;
+
+                    if (isError(index)) return index;
+
+                    return try evalIndexExpression(allocator, left, index);
+                },
             }
         },
     }
@@ -273,6 +283,25 @@ fn evalExpressions(allocator: std.mem.Allocator, exps: std.ArrayList(*ast.Expres
     }
 
     return result;
+}
+
+fn evalIndexExpression(allocator: std.mem.Allocator, left: object.Object, index: object.Object) !?object.Object {
+    if (std.mem.eql(u8, object.ARRAY_OBJ, left.kind()) and std.mem.eql(u8, object.INTEGER_OBJ, index.kind())) {
+        return evalArrayIndexExpression(left, index);
+    }
+
+    const msg = try std.fmt.allocPrint(allocator, "index operator not supporrted: {s}", .{left.kind()});
+    return .{ .error_ = .{ .message = msg } };
+}
+
+fn evalArrayIndexExpression(left: object.Object, index: object.Object) !?object.Object {
+    const array_obj = left.array;
+    const idx = index.integer.value;
+    const max: i64 = @intCast(array_obj.elements.items.len);
+
+    if (idx < 0 or idx >= max) return .{ .null_ = .{} };
+
+    return array_obj.elements.items[@intCast(idx)];
 }
 
 fn applyFunction(allocator: std.mem.Allocator, func: object.Object, args: std.ArrayList(object.Object)) !?object.Object {
@@ -745,6 +774,40 @@ test "array literals" {
     try testIntegerObject(arr_lit.elements.items[0], 1);
     try testIntegerObject(arr_lit.elements.items[1], 4);
     try testIntegerObject(arr_lit.elements.items[2], 6);
+}
+
+test "index expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: Expected,
+    }{
+        .{ .input = "[1, 2, 3][0]", .expected = .{ .int = 1 } },
+        .{ .input = "[1, 2, 3][1]", .expected = .{ .int = 2 } },
+        .{ .input = "[1, 2, 3][2]", .expected = .{ .int = 3 } },
+        .{ .input = "let i = 0; [1][i]", .expected = .{ .int = 1 } },
+        .{ .input = "[1, 2, 3][1 + 1]", .expected = .{ .int = 3 } },
+        .{ .input = "let myArray = [1, 2, 3]; myArray[2]", .expected = .{ .int = 3 } },
+        .{ .input = "let myArray = [1, 2, 3]; myArray[0] + myArray[1] + myArray[2];", .expected = .{ .int = 6 } },
+        .{ .input = "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]", .expected = .{ .int = 2 } },
+        .{ .input = "[1, 2, 3][3]", .expected = .null_ },
+        .{ .input = "[1, 2, 3][-1]", .expected = .null_ },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
+
+        switch (t.expected) {
+            .int => |i| try testIntegerObject(evaluated, i),
+            .null_ => try testNullObject(evaluated),
+            else => return error.WrongExpectedType,
+        }
+    }
 }
 
 fn testEval(allocator: std.mem.Allocator, input: []const u8, env: *Environment) !?object.Object {
