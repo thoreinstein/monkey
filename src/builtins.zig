@@ -8,6 +8,7 @@ pub const builtins = std.StaticStringMap(object.Builtin).initComptime(.{
     .{ "last", object.Builtin{ .func = lastBuiltin } },
     .{ "rest", object.Builtin{ .func = restBuiltin } },
     .{ "push", object.Builtin{ .func = pushBuiltin } },
+    .{ "puts", object.Builtin{ .func = putsBuiltin } },
 });
 
 fn lenBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?object.Object {
@@ -114,6 +115,16 @@ fn pushBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?obje
             const msg = try std.fmt.allocPrint(allocator, "argument to `first` must be ARRAY, got={s}", .{args[0].kind()});
             return .{ .error_ = .{ .message = msg } };
         },
+    }
+
+    return .{ .null_ = .{} };
+}
+
+fn putsBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?object.Object {
+    for (args) |arg| {
+        const val = arg.inspect(allocator) catch return error.OutOfMemory;
+
+        std.debug.print("{s}\n", .{val});
     }
 
     return .{ .null_ = .{} };
