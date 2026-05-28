@@ -314,8 +314,28 @@ fn evalIndexExpression(allocator: std.mem.Allocator, left: object.Object, index:
         return evalArrayIndexExpression(left, index);
     }
 
+    if (std.mem.eql(u8, object.HASH_OBJ, left.kind())) {
+        return evalHashIndexExpression(allocator, left, index);
+    }
+
     const msg = try std.fmt.allocPrint(allocator, "index operator not supporrted: {s}", .{left.kind()});
     return .{ .error_ = .{ .message = msg } };
+}
+
+fn evalHashIndexExpression(allocator: std.mem.Allocator, hash: object.Object, index: object.Object) !?object.Object {
+    const hash_obj = switch (hash) {
+        .hash => |h| h,
+        else => return null,
+    };
+
+    const hashed = index.hashKey() orelse {
+        const msg = try std.fmt.allocPrint(allocator, "unusable as hash key: {s}", .{index.kind()});
+        return .{ .error_ = .{ .message = msg } };
+    };
+
+    const pair = hash_obj.pairs.get(hashed) orelse return .{ .null_ = .{} };
+
+    return pair.value;
 }
 
 fn evalArrayIndexExpression(left: object.Object, index: object.Object) !?object.Object {
@@ -564,6 +584,7 @@ test "error handling" {
         .{ .input = "if (10 > 1) { true + false; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "foobar", .expected = "identifier not found: foobar" },
         .{ .input = "\"Hello\" - \"World\"", .expected = "unknown operator: STRING - STRING" },
+        .{ .input = "{\"name\": \"Monkey\"}[fn(x) { x }]", .expected = "unusable as hash key: FUNCTION" },
         .{ .input =
         \\if (10 > 1) {
         \\  if (10 > 1) {
@@ -886,6 +907,37 @@ test "hash literals" {
             return error.NoPair;
         };
         try testIntegerObject(pair.value, e.value);
+    }
+}
+
+test "hash index expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: Expected,
+    }{
+        .{ .input = "{\"foo\": 5}[\"foo\"]", .expected = .{ .int = 5 } },
+        .{ .input = "{\"foo\": 5}[\"bar\"]", .expected = .null_ },
+        .{ .input = "let key = \"foo\";{\"foo\": 5}[key]", .expected = .{ .int = 5 } },
+        .{ .input = "{}[\"foo\"]", .expected = .null_ },
+        .{ .input = "{5: 5}[5]", .expected = .{ .int = 5 } },
+        .{ .input = "{true: 5}[true]", .expected = .{ .int = 5 } },
+        .{ .input = "{false: 5}[false]", .expected = .{ .int = 5 } },
+    };
+
+    for (tests) |t| {
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
+
+        switch (t.expected) {
+            .int => |i| try testIntegerObject(evaluated, i),
+            .null_ => try testNullObject(evaluated),
+            else => return error.WrongExpectedType,
+        }
     }
 }
 
