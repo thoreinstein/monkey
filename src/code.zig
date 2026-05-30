@@ -17,6 +17,9 @@ pub const Opcode = enum(u8) {
     greater_than,
     minus,
     bang,
+    jump_not_truthy,
+    jump,
+    null_,
 };
 
 pub const Definition = struct {
@@ -38,9 +41,12 @@ pub fn lookup(op: Opcode) Definition {
         .equal => return .{ .name = "OpEqual", .operand_widths = &.{} },
         .false_ => return .{ .name = "OpFalse", .operand_widths = &.{} },
         .greater_than => return .{ .name = "OpGreaterThan", .operand_widths = &.{} },
+        .jump => return .{ .name = "OpJump", .operand_widths = &.{2} },
+        .jump_not_truthy => return .{ .name = "OpJumpNotTruthy", .operand_widths = &.{2} },
         .minus => return .{ .name = "OpMinus", .operand_widths = &.{} },
         .mul => return .{ .name = "OpMul", .operand_widths = &.{} },
         .not_equal => return .{ .name = "OpNotEqual", .operand_widths = &.{} },
+        .null_ => return .{ .name = "OpNull", .operand_widths = &.{} },
         .pop => return .{ .name = "OpPop", .operand_widths = &.{} },
         .sub => return .{ .name = "OpSub", .operand_widths = &.{} },
         .true_ => return .{ .name = "OpTrue", .operand_widths = &.{} },

@@ -41,12 +41,25 @@ pub fn run(self: *Self) !void {
 
                 try self.push(self.constants[const_index]);
             },
+            .jump => {
+                const pos: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
+                ip = pos - 1;
+            },
+            .jump_not_truthy => {
+                const pos: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
+                ip += 2;
+
+                const condition = self.pop();
+
+                if (!isTruthy(condition)) ip = pos - 1;
+            },
             .add, .sub, .mul, .div => try self.executeBinaryOperation(op),
             .true_ => try self.push(.{ .boolean = .{ .value = true } }),
             .false_ => try self.push(.{ .boolean = .{ .value = false } }),
             .equal, .not_equal, .greater_than => try self.executeComparison(op),
             .bang => try self.executeBangOperator(),
             .minus => try self.executeMinusOperator(),
+            .null_ => try self.push(.null_),
             .pop => _ = self.pop(),
         }
     }
@@ -150,6 +163,7 @@ fn executeBangOperator(self: *Self) !void {
                 try self.push(.{ .boolean = .{ .value = true } });
             }
         },
+        .null_ => try self.push(.{ .boolean = .{ .value = true } }),
         else => try self.push(.{ .boolean = .{ .value = false } }),
     }
 }
@@ -166,9 +180,18 @@ fn executeMinusOperator(self: *Self) !void {
     return error.UnsupportedObjectForNegation;
 }
 
+fn isTruthy(obj: object.Object) bool {
+    return switch (obj) {
+        .boolean => |b| b.value,
+        .null_ => false,
+        else => true,
+    };
+}
+
 const Expected = union(enum) {
     integer: i64,
     boolean: bool,
+    null_: void,
 };
 
 const VMTestCase = struct {
@@ -232,6 +255,27 @@ test "boolean expressions" {
         .{ .input = "!!true", .expected = .{ .boolean = true } },
         .{ .input = "!!false", .expected = .{ .boolean = false } },
         .{ .input = "!!5", .expected = .{ .boolean = true } },
+        .{ .input = "!(if (false) { 5; })", .expected = .{ .boolean = true } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "conditionals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "if (true) { 10 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (true) { 10 } else { 20 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (false) { 10 } else { 20 }", .expected = .{ .integer = 20 } },
+        .{ .input = "if (1) { 10 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (1 < 2) { 10 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (1 < 2) { 10 } else { 20 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (1 > 2) { 10 } else { 20 }", .expected = .{ .integer = 20 } },
+        .{ .input = "if (1 > 2) { 10 }", .expected = .null_ },
+        .{ .input = "if (false) { 10 }", .expected = .null_ },
+        .{ .input = "if ((if (false) { 10 })) { 10 } else { 20 }", .expected = .{ .integer = 20 } },
     };
 
     try runVMTests(arena.allocator(), &tests);
@@ -267,6 +311,9 @@ fn testExpectedObject(expected: Expected, actual: object.Object) !void {
     switch (expected) {
         .integer => |i| try testIntegerObject(i, actual),
         .boolean => |b| try testBooleanObject(b, actual),
+        .null_ => {
+            try testing.expect(actual == .null_);
+        },
     }
 }
 

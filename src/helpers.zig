@@ -7,3 +7,8 @@ pub const ByteCode = struct {
     instructions: code.Instructions,
     constants: []object.Object,
 };
+
+pub const EmittedInstruction = struct {
+    opcode: code.Opcode,
+    position: usize,
+};

@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 
 const ByteCode = @import("helpers.zig").ByteCode;
+const EmittedInstruction = @import("helpers.zig").EmittedInstruction;
 
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
@@ -14,11 +15,15 @@ const Self = @This();
 
 instructions: std.ArrayList(u8),
 constants: std.ArrayList(object.Object),
+last_instruction: ?EmittedInstruction,
+previous_instruction: ?EmittedInstruction,
 
 pub fn init() Self {
     return Self{
         .constants = std.ArrayList(object.Object).empty,
         .instructions = std.ArrayList(u8).empty,
+        .last_instruction = null,
+        .previous_instruction = null,
     };
 }
 
@@ -27,6 +32,31 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
         .program => |p| for (p.statements.items) |stmt| try self.compile(allocator, .{ .statement = stmt }),
         .expression => |e| {
             switch (e) {
+                .if_expression => |ie| {
+                    try self.compile(allocator, .{ .expression = ie.condition.?.* });
+
+                    const not_truthy_pos = try self.emit(allocator, .jump_not_truthy, &.{9999});
+
+                    try self.compile(allocator, .{ .statement = .{ .block_statement = ie.consequence.? } });
+
+                    if (self.lastInstructionIsPop()) self.removeLastPop();
+
+                    const jump_pos = try self.emit(allocator, .jump, &.{9999});
+                    const after_consequence_pos = self.instructions.items.len;
+
+                    try self.changeOperand(allocator, not_truthy_pos, &.{after_consequence_pos});
+
+                    if (ie.alternative == null) {
+                        _ = try self.emit(allocator, .null_, &.{});
+                    } else {
+                        try self.compile(allocator, .{ .statement = .{ .block_statement = ie.alternative.? } });
+
+                        if (self.lastInstructionIsPop()) self.removeLastPop();
+                    }
+
+                    const after_alternative_pos = self.instructions.items.len;
+                    try self.changeOperand(allocator, jump_pos, &.{after_alternative_pos});
+                },
                 .prefix_expression => |pe| {
                     try self.compile(allocator, .{ .expression = pe.right.?.* });
 
@@ -95,6 +125,11 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
             }
         },
         .statement => |s| switch (s) {
+            .block_statement => |bs| {
+                for (bs.statements.items) |stmt| {
+                    try self.compile(allocator, .{ .statement = stmt });
+                }
+            },
             .expression_statement => |es| {
                 try self.compile(allocator, .{ .expression = es.expression.?.* });
 
@@ -122,6 +157,8 @@ fn emit(self: *Self, allocator: std.mem.Allocator, op: code.Opcode, operands: []
     const ins = try code.make(allocator, op, operands);
     const pos = try self.addInstruction(allocator, ins);
 
+    self.setLastInstruction(op, pos);
+
     return pos;
 }
 
@@ -130,6 +167,39 @@ fn addInstruction(self: *Self, allocator: std.mem.Allocator, ins: []const u8) !u
     try self.instructions.appendSlice(allocator, ins);
 
     return pos_new_instruction;
+}
+
+fn setLastInstruction(self: *Self, op: code.Opcode, pos: usize) void {
+    const previous = self.last_instruction;
+    const last: EmittedInstruction = .{ .opcode = op, .position = pos };
+
+    self.previous_instruction = previous;
+    self.last_instruction = last;
+}
+
+fn lastInstructionIsPop(self: *const Self) bool {
+    return self.last_instruction.?.opcode == .pop;
+}
+
+fn removeLastPop(self: *Self) void {
+    self.instructions.shrinkRetainingCapacity(self.last_instruction.?.position);
+
+    self.last_instruction = self.previous_instruction;
+}
+
+fn replaceLastInstruction(self: *Self, pos: usize, newInstruction: []const u8) void {
+    var i: usize = 0;
+    while (i < newInstruction.len) : (i += 1) {
+        self.instructions.items[pos + i] = newInstruction[i];
+    }
+}
+
+fn changeOperand(self: *Self, allocator: std.mem.Allocator, op_pos: usize, operand: []const usize) !void {
+    const op: code.Opcode = @enumFromInt(self.instructions.items[op_pos]);
+
+    const new_instruction = try code.make(allocator, op, operand);
+
+    self.replaceLastInstruction(op_pos, new_instruction);
 }
 
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
@@ -314,6 +384,48 @@ test "boolean expressions" {
     try runCompilerTests(arena.allocator(), &tests);
 }
 
+test "conditionals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "if (true) { 10 }; 3333;",
+            .expected_constants = &.{ .{ .integer = 10 }, .{ .integer = 3333 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .true_, &.{}),
+                try code.make(arena.allocator(), .jump_not_truthy, &.{10}),
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .jump, &.{11}),
+                try code.make(arena.allocator(), .null_, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "if (true) { 10 } else { 20 }; 3333;",
+            .expected_constants = &.{
+                .{ .integer = 10 },
+                .{ .integer = 20 },
+                .{ .integer = 3333 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .true_, &.{}),
+                try code.make(arena.allocator(), .jump_not_truthy, &.{10}),
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .jump, &.{13}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
 fn runCompilerTests(allocator: std.mem.Allocator, tests: []const CompilerTestCase) !void {
     for (tests) |t| {
         const program = try parse(allocator, t.input);
@@ -330,7 +442,7 @@ fn runCompilerTests(allocator: std.mem.Allocator, tests: []const CompilerTestCas
 fn testInstructions(allocator: std.mem.Allocator, expected: []const code.Instructions, actual: code.Instructions) !void {
     const concatted = try concatInstructions(allocator, expected);
 
-    try testing.expectEqual(actual.len, concatted.len);
+    try testing.expectEqual(concatted.len, actual.len);
 
     for (concatted, 0..) |ins, i| {
         try testing.expectEqual(ins, actual[i]);
