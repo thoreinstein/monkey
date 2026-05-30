@@ -15,6 +15,8 @@ pub const Opcode = enum(u8) {
     equal,
     not_equal,
     greater_than,
+    minus,
+    bang,
 };
 
 pub const Definition = struct {
@@ -29,17 +31,19 @@ const Operands = struct {
 
 pub fn lookup(op: Opcode) Definition {
     switch (op) {
-        .constant => return .{ .name = "OpConstant", .operand_widths = &.{2} },
         .add => return .{ .name = "OpAdd", .operand_widths = &.{} },
-        .sub => return .{ .name = "OpSub", .operand_widths = &.{} },
-        .mul => return .{ .name = "OpMul", .operand_widths = &.{} },
+        .bang => return .{ .name = "OpBang", .operand_widths = &.{} },
+        .constant => return .{ .name = "OpConstant", .operand_widths = &.{2} },
         .div => return .{ .name = "OpDiv", .operand_widths = &.{} },
-        .true_ => return .{ .name = "OpTrue", .operand_widths = &.{} },
-        .false_ => return .{ .name = "OpFalse", .operand_widths = &.{} },
         .equal => return .{ .name = "OpEqual", .operand_widths = &.{} },
-        .not_equal => return .{ .name = "OpNotEqual", .operand_widths = &.{} },
+        .false_ => return .{ .name = "OpFalse", .operand_widths = &.{} },
         .greater_than => return .{ .name = "OpGreaterThan", .operand_widths = &.{} },
+        .minus => return .{ .name = "OpMinus", .operand_widths = &.{} },
+        .mul => return .{ .name = "OpMul", .operand_widths = &.{} },
+        .not_equal => return .{ .name = "OpNotEqual", .operand_widths = &.{} },
         .pop => return .{ .name = "OpPop", .operand_widths = &.{} },
+        .sub => return .{ .name = "OpSub", .operand_widths = &.{} },
+        .true_ => return .{ .name = "OpTrue", .operand_widths = &.{} },
     }
 }
 

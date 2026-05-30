@@ -45,6 +45,8 @@ pub fn run(self: *Self) !void {
             .true_ => try self.push(.{ .boolean = .{ .value = true } }),
             .false_ => try self.push(.{ .boolean = .{ .value = false } }),
             .equal, .not_equal, .greater_than => try self.executeComparison(op),
+            .bang => try self.executeBangOperator(),
+            .minus => try self.executeMinusOperator(),
             .pop => _ = self.pop(),
         }
     }
@@ -137,6 +139,33 @@ fn executeIntegerComparison(self: *Self, op: code.Opcode, left: object.Object, r
     }
 }
 
+fn executeBangOperator(self: *Self) !void {
+    const operand = self.pop();
+
+    switch (operand) {
+        .boolean => |b| {
+            if (b.value) {
+                try self.push(.{ .boolean = .{ .value = false } });
+            } else {
+                try self.push(.{ .boolean = .{ .value = true } });
+            }
+        },
+        else => try self.push(.{ .boolean = .{ .value = false } }),
+    }
+}
+
+fn executeMinusOperator(self: *Self) !void {
+    const operand = self.pop();
+
+    if (std.mem.eql(u8, object.INTEGER_OBJ, operand.kind())) {
+        const value = operand.integer.value;
+
+        return try self.push(.{ .integer = .{ .value = -value } });
+    }
+
+    return error.UnsupportedObjectForNegation;
+}
+
 const Expected = union(enum) {
     integer: i64,
     boolean: bool,
@@ -164,6 +193,10 @@ test "integer arithmetic" {
         .{ .input = "5 * 2 + 10", .expected = .{ .integer = 20 } },
         .{ .input = "5 + 2 * 10", .expected = .{ .integer = 25 } },
         .{ .input = "5 * (2 + 10)", .expected = .{ .integer = 60 } },
+        .{ .input = "-5", .expected = .{ .integer = -5 } },
+        .{ .input = "-10", .expected = .{ .integer = -10 } },
+        .{ .input = "-50 + 100 + -50", .expected = .{ .integer = 0 } },
+        .{ .input = "(5 + 10 * 2 + 15 / 3) * 2 + -10", .expected = .{ .integer = 50 } },
     };
 
     try runVMTests(arena.allocator(), &tests);
@@ -193,6 +226,12 @@ test "boolean expressions" {
         .{ .input = "(1 < 2) == false", .expected = .{ .boolean = false } },
         .{ .input = "(1 > 2) == true", .expected = .{ .boolean = false } },
         .{ .input = "(1 > 2) == false", .expected = .{ .boolean = true } },
+        .{ .input = "!true", .expected = .{ .boolean = false } },
+        .{ .input = "!false", .expected = .{ .boolean = true } },
+        .{ .input = "!5", .expected = .{ .boolean = false } },
+        .{ .input = "!!true", .expected = .{ .boolean = true } },
+        .{ .input = "!!false", .expected = .{ .boolean = false } },
+        .{ .input = "!!5", .expected = .{ .boolean = true } },
     };
 
     try runVMTests(arena.allocator(), &tests);

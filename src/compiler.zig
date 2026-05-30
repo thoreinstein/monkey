@@ -27,6 +27,17 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
         .program => |p| for (p.statements.items) |stmt| try self.compile(allocator, .{ .statement = stmt }),
         .expression => |e| {
             switch (e) {
+                .prefix_expression => |pe| {
+                    try self.compile(allocator, .{ .expression = pe.right.?.* });
+
+                    if (std.mem.eql(u8, "!", pe.operator)) {
+                        _ = try self.emit(allocator, .bang, &.{});
+                    }
+
+                    if (std.mem.eql(u8, "-", pe.operator)) {
+                        _ = try self.emit(allocator, .minus, &.{});
+                    }
+                },
                 .infix_expression => |ie| {
                     if (std.mem.eql(u8, "<", ie.operator)) {
                         try self.compile(allocator, .{ .expression = ie.right.?.* });
@@ -194,6 +205,15 @@ test "integer arithmetic" {
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
+        .{
+            .input = "-1",
+            .expected_constants = &.{.{ .integer = 1 }},
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .minus, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
     };
 
     try runCompilerTests(arena.allocator(), &tests);
@@ -209,6 +229,15 @@ test "boolean expressions" {
             .expected_constants = &.{},
             .expected_instructions = &.{
                 try code.make(arena.allocator(), .true_, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "!true",
+            .expected_constants = &.{},
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .true_, &.{}),
+                try code.make(arena.allocator(), .bang, &.{}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
