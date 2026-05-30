@@ -30,6 +30,10 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                 .infix_expression => |ie| {
                     try self.compile(allocator, .{ .expression = ie.left.?.* });
                     try self.compile(allocator, .{ .expression = ie.right.?.* });
+
+                    if (std.mem.eql(u8, "+", ie.operator)) {
+                        _ = try self.emit(allocator, .add, &.{});
+                    }
                 },
                 .integer_literal => |il| {
                     const integer = object.Integer{ .value = il.value };
@@ -102,6 +106,7 @@ test "integer arithmetic" {
             .expected_instructions = &.{
                 try code.make(arena.allocator(), .constant, &.{0}),
                 try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .add, &.{}),
             },
         },
     };

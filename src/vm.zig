@@ -41,6 +41,22 @@ pub fn run(self: *Self) !void {
 
                 try self.push(self.constants[const_index]);
             },
+            .add => {
+                const right = self.pop();
+                const left = self.pop();
+
+                const left_value = switch (left) {
+                    .integer => |i| i,
+                    else => return error.NotIntegerObject,
+                };
+
+                const right_value = switch (right) {
+                    .integer => |i| i,
+                    else => return error.NotIntegerObject,
+                };
+
+                try self.push(.{ .integer = .{ .value = left_value.value + right_value.value } });
+            },
         }
     }
 }
@@ -56,6 +72,13 @@ fn push(self: *Self, o: object.Object) !void {
 
     self.stack[self.sp] = o;
     self.sp += 1;
+}
+
+fn pop(self: *Self) object.Object {
+    const o = self.stack[self.sp - 1];
+    self.sp -= 1;
+
+    return o;
 }
 
 const Expected = union(enum) {
@@ -74,7 +97,7 @@ test "integer arithmetic" {
     const tests = [_]VMTestCase{
         .{ .input = "1", .expected = .{ .integer = 1 } },
         .{ .input = "2", .expected = .{ .integer = 2 } },
-        .{ .input = "1 + 2", .expected = .{ .integer = 2 } },
+        .{ .input = "1 + 2", .expected = .{ .integer = 3 } },
     };
 
     try runVMTests(arena.allocator(), &tests);
