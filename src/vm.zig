@@ -41,22 +41,7 @@ pub fn run(self: *Self) !void {
 
                 try self.push(self.constants[const_index]);
             },
-            .add => {
-                const right = self.pop();
-                const left = self.pop();
-
-                const left_value = switch (left) {
-                    .integer => |i| i,
-                    else => return error.NotIntegerObject,
-                };
-
-                const right_value = switch (right) {
-                    .integer => |i| i,
-                    else => return error.NotIntegerObject,
-                };
-
-                try self.push(.{ .integer = .{ .value = left_value.value + right_value.value } });
-            },
+            .add, .sub, .mul, .div => try self.executeBinaryOperation(op),
             .pop => _ = self.pop(),
         }
     }
@@ -86,6 +71,37 @@ fn pop(self: *Self) object.Object {
     return o;
 }
 
+fn executeBinaryOperation(self: *Self, op: code.Opcode) !void {
+    const right = self.pop();
+    const left = self.pop();
+
+    const left_value = switch (left) {
+        .integer => |i| i,
+        else => return error.NotIntegerObject,
+    };
+
+    const right_value = switch (right) {
+        .integer => |i| i,
+        else => return error.NotIntegerObject,
+    };
+
+    try self.executeBinaryIntegerOperation(op, left_value.value, right_value.value);
+}
+
+fn executeBinaryIntegerOperation(self: *Self, op: code.Opcode, left: i64, right: i64) !void {
+    var result: i64 = 0;
+
+    switch (op) {
+        .add => result = left + right,
+        .sub => result = left - right,
+        .mul => result = left * right,
+        .div => result = @divTrunc(left, right),
+        else => return error.UnknownIntegerOperation,
+    }
+
+    try self.push(.{ .integer = .{ .value = result } });
+}
+
 const Expected = union(enum) {
     integer: i64,
 };
@@ -103,6 +119,15 @@ test "integer arithmetic" {
         .{ .input = "1", .expected = .{ .integer = 1 } },
         .{ .input = "2", .expected = .{ .integer = 2 } },
         .{ .input = "1 + 2", .expected = .{ .integer = 3 } },
+        .{ .input = "1 - 2", .expected = .{ .integer = -1 } },
+        .{ .input = "1 * 2", .expected = .{ .integer = 2 } },
+        .{ .input = "4 / 2", .expected = .{ .integer = 2 } },
+        .{ .input = "50 / 2 * 2 + 10 - 5", .expected = .{ .integer = 55 } },
+        .{ .input = "5 + 5 + 5 + 5 - 10", .expected = .{ .integer = 10 } },
+        .{ .input = "2 * 2 * 2 * 2 * 2", .expected = .{ .integer = 32 } },
+        .{ .input = "5 * 2 + 10", .expected = .{ .integer = 20 } },
+        .{ .input = "5 + 2 * 10", .expected = .{ .integer = 25 } },
+        .{ .input = "5 * (2 + 10)", .expected = .{ .integer = 60 } },
     };
 
     try runVMTests(arena.allocator(), &tests);

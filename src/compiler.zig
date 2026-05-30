@@ -34,6 +34,18 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                     if (std.mem.eql(u8, "+", ie.operator)) {
                         _ = try self.emit(allocator, .add, &.{});
                     }
+
+                    if (std.mem.eql(u8, "-", ie.operator)) {
+                        _ = try self.emit(allocator, .sub, &.{});
+                    }
+
+                    if (std.mem.eql(u8, "*", ie.operator)) {
+                        _ = try self.emit(allocator, .mul, &.{});
+                    }
+
+                    if (std.mem.eql(u8, "/", ie.operator)) {
+                        _ = try self.emit(allocator, .div, &.{});
+                    }
                 },
                 .integer_literal => |il| {
                     const integer = object.Integer{ .value = il.value };
@@ -121,6 +133,36 @@ test "integer arithmetic" {
                 try code.make(arena.allocator(), .constant, &.{0}),
                 try code.make(arena.allocator(), .pop, &.{}),
                 try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "1 - 2",
+            .expected_constants = &.{ .{ .integer = 1 }, .{ .integer = 2 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .sub, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "1 * 2",
+            .expected_constants = &.{ .{ .integer = 1 }, .{ .integer = 2 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .mul, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "2 / 1",
+            .expected_constants = &.{ .{ .integer = 2 }, .{ .integer = 1 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .div, &.{}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },

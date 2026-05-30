@@ -7,6 +7,9 @@ pub const Opcode = enum(u8) {
     constant,
     add,
     pop,
+    sub,
+    mul,
+    div,
 };
 
 pub const Definition = struct {
@@ -23,6 +26,9 @@ pub fn lookup(op: Opcode) Definition {
     switch (op) {
         .constant => return .{ .name = "OpConstant", .operand_widths = &.{2} },
         .add => return .{ .name = "OpAdd", .operand_widths = &.{} },
+        .sub => return .{ .name = "OpSub", .operand_widths = &.{} },
+        .mul => return .{ .name = "OpMul", .operand_widths = &.{} },
+        .div => return .{ .name = "OpDiv", .operand_widths = &.{} },
         .pop => return .{ .name = "OpPop", .operand_widths = &.{} },
     }
 }
@@ -31,6 +37,9 @@ pub fn make(allocator: std.mem.Allocator, op: Opcode, operands: []const usize) !
     const def = switch (op) {
         .constant => |c| lookup(c),
         .add => |a| lookup(a),
+        .sub => |s| lookup(s),
+        .mul => |m| lookup(m),
+        .div => |d| lookup(d),
         .pop => |p| lookup(p),
     };
 
