@@ -6,6 +6,7 @@ pub const Instructions = []const u8;
 pub const Opcode = enum(u8) {
     constant,
     add,
+    pop,
 };
 
 pub const Definition = struct {
@@ -22,6 +23,7 @@ pub fn lookup(op: Opcode) Definition {
     switch (op) {
         .constant => return .{ .name = "OpConstant", .operand_widths = &.{2} },
         .add => return .{ .name = "OpAdd", .operand_widths = &.{} },
+        .pop => return .{ .name = "OpPop", .operand_widths = &.{} },
     }
 }
 
@@ -29,6 +31,7 @@ pub fn make(allocator: std.mem.Allocator, op: Opcode, operands: []const usize) !
     const def = switch (op) {
         .constant => |c| lookup(c),
         .add => |a| lookup(a),
+        .pop => |p| lookup(p),
     };
 
     var instruction_len: usize = 1;

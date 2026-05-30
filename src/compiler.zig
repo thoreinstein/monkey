@@ -44,7 +44,11 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
             }
         },
         .statement => |s| switch (s) {
-            .expression_statement => |es| try self.compile(allocator, .{ .expression = es.expression.?.* }),
+            .expression_statement => |es| {
+                try self.compile(allocator, .{ .expression = es.expression.?.* });
+
+                _ = try self.emit(allocator, .pop, &.{});
+            },
             else => {},
         },
     }
@@ -107,6 +111,17 @@ test "integer arithmetic" {
                 try code.make(arena.allocator(), .constant, &.{0}),
                 try code.make(arena.allocator(), .constant, &.{1}),
                 try code.make(arena.allocator(), .add, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "1; 2",
+            .expected_constants = &.{ .{ .integer = 1 }, .{ .integer = 2 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .pop, &.{}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
             },
         },
     };

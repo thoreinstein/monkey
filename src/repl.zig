@@ -51,12 +51,9 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             continue;
         };
 
-        const stack_top = machine.stackTop() orelse {
-            try out.flush();
-            continue;
-        };
+        const last_popped = machine.lastPoppedStackElem();
 
-        const rendered = try stack_top.inspect(arena.allocator());
+        const rendered = try last_popped.inspect(arena.allocator());
 
         try out.writeAll(rendered);
         try out.writeAll("\n");

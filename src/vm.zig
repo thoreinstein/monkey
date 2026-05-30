@@ -57,6 +57,7 @@ pub fn run(self: *Self) !void {
 
                 try self.push(.{ .integer = .{ .value = left_value.value + right_value.value } });
             },
+            .pop => _ = self.pop(),
         }
     }
 }
@@ -65,6 +66,10 @@ pub fn stackTop(self: Self) ?object.Object {
     if (self.sp == 0) return null;
 
     return self.stack[self.sp - 1];
+}
+
+pub fn lastPoppedStackElem(self: *const Self) object.Object {
+    return self.stack[self.sp];
 }
 
 fn push(self: *Self, o: object.Object) !void {
@@ -121,7 +126,7 @@ fn runVMTests(allocator: std.mem.Allocator, tests: []const VMTestCase) !void {
 
         try vm.run();
 
-        const stack_elem = vm.stackTop() orelse return error.StackTopError;
+        const stack_elem = vm.lastPoppedStackElem();
 
         try testExpectedObject(t.expected, stack_elem);
     }
