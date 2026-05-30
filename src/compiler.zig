@@ -52,6 +52,13 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                     const operands = try self.addConstant(allocator, .{ .integer = integer });
                     _ = try self.emit(allocator, .constant, &.{operands});
                 },
+                .boolean_expression => |be| {
+                    if (be.value) {
+                        _ = try self.emit(allocator, .true_, &.{});
+                    } else {
+                        _ = try self.emit(allocator, .false_, &.{});
+                    }
+                },
                 else => {},
             }
         },
@@ -163,6 +170,32 @@ test "integer arithmetic" {
                 try code.make(arena.allocator(), .constant, &.{0}),
                 try code.make(arena.allocator(), .constant, &.{1}),
                 try code.make(arena.allocator(), .div, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
+test "boolean expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "true",
+            .expected_constants = &.{},
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .true_, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "false",
+            .expected_constants = &.{},
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .false_, &.{}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },

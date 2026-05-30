@@ -10,6 +10,8 @@ pub const Opcode = enum(u8) {
     sub,
     mul,
     div,
+    true_,
+    false_,
 };
 
 pub const Definition = struct {
@@ -29,18 +31,15 @@ pub fn lookup(op: Opcode) Definition {
         .sub => return .{ .name = "OpSub", .operand_widths = &.{} },
         .mul => return .{ .name = "OpMul", .operand_widths = &.{} },
         .div => return .{ .name = "OpDiv", .operand_widths = &.{} },
+        .true_ => return .{ .name = "OpTrue", .operand_widths = &.{} },
+        .false_ => return .{ .name = "OpFalse", .operand_widths = &.{} },
         .pop => return .{ .name = "OpPop", .operand_widths = &.{} },
     }
 }
 
 pub fn make(allocator: std.mem.Allocator, op: Opcode, operands: []const usize) ![]const u8 {
     const def = switch (op) {
-        .constant => |c| lookup(c),
-        .add => |a| lookup(a),
-        .sub => |s| lookup(s),
-        .mul => |m| lookup(m),
-        .div => |d| lookup(d),
-        .pop => |p| lookup(p),
+        inline else => |v| lookup(v),
     };
 
     var instruction_len: usize = 1;

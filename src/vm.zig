@@ -42,6 +42,8 @@ pub fn run(self: *Self) !void {
                 try self.push(self.constants[const_index]);
             },
             .add, .sub, .mul, .div => try self.executeBinaryOperation(op),
+            .true_ => try self.push(.{ .boolean = .{ .value = true } }),
+            .false_ => try self.push(.{ .boolean = .{ .value = false } }),
             .pop => _ = self.pop(),
         }
     }
@@ -104,6 +106,7 @@ fn executeBinaryIntegerOperation(self: *Self, op: code.Opcode, left: i64, right:
 
 const Expected = union(enum) {
     integer: i64,
+    boolean: bool,
 };
 
 const VMTestCase = struct {
@@ -128,6 +131,18 @@ test "integer arithmetic" {
         .{ .input = "5 * 2 + 10", .expected = .{ .integer = 20 } },
         .{ .input = "5 + 2 * 10", .expected = .{ .integer = 25 } },
         .{ .input = "5 * (2 + 10)", .expected = .{ .integer = 60 } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "boolean expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "true", .expected = .{ .boolean = true } },
+        .{ .input = "false", .expected = .{ .boolean = false } },
     };
 
     try runVMTests(arena.allocator(), &tests);
@@ -160,6 +175,7 @@ fn runVMTests(allocator: std.mem.Allocator, tests: []const VMTestCase) !void {
 fn testExpectedObject(expected: Expected, actual: object.Object) !void {
     switch (expected) {
         .integer => |i| try testIntegerObject(i, actual),
+        .boolean => |b| try testBooleanObject(b, actual),
     }
 }
 
@@ -173,4 +189,16 @@ fn testIntegerObject(expected: i64, actual: object.Object) !void {
     };
 
     try testing.expectEqual(expected, int_obj.value);
+}
+
+fn testBooleanObject(expected: bool, actual: object.Object) !void {
+    const bool_obj = switch (actual) {
+        .boolean => |b| b,
+        else => {
+            std.debug.print("object is not Boolean, got={s}", .{@tagName(actual)});
+            return error.WrongObjectType;
+        },
+    };
+
+    try testing.expectEqual(expected, bool_obj.value);
 }
