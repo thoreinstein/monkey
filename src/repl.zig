@@ -2,13 +2,14 @@ const std = @import("std");
 const io = std.Io;
 
 const Environment = @import("environment.zig");
-const Evaluator = @import("evaluator.zig");
+const Compiler = @import("compiler.zig");
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
+const VM = @import("vm.zig");
 
 const PROMPT = ">> ";
 
-pub fn start(allocator: std.mem.Allocator, env: *Environment, in: *io.Reader, out: *io.Writer) !?void {
+pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?void {
     while (true) {
         try out.writeAll(PROMPT);
         try out.flush();
@@ -34,12 +35,28 @@ pub fn start(allocator: std.mem.Allocator, env: *Environment, in: *io.Reader, ou
             continue;
         }
 
-        const evaluated = try Evaluator.eval(allocator, .{ .program = program }, env) orelse {
+        var compiler = Compiler.init();
+
+        compiler.compile(arena.allocator(), .{ .program = program }) catch |err| {
+            try out.print("Woops! Compilation failed\n {s}\n", .{@errorName(err)});
             try out.flush();
             continue;
         };
 
-        const rendered = try evaluated.inspect(allocator);
+        var machine = try VM.init(arena.allocator(), compiler.bytecode());
+
+        machine.run() catch |err| {
+            try out.print("Woops! Executing bytecode failed\n {s}\n", .{@errorName(err)});
+            try out.flush();
+            continue;
+        };
+
+        const stack_top = machine.stackTop() orelse {
+            try out.flush();
+            continue;
+        };
+
+        const rendered = try stack_top.inspect(arena.allocator());
 
         try out.writeAll(rendered);
         try out.writeAll("\n");
