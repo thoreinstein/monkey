@@ -13,10 +13,12 @@ const object = @import("object.zig");
 const Self = @This();
 
 const stack_size: usize = 2048;
+pub const global_size: usize = 65536;
 
 constants: []object.Object,
 instructions: code.Instructions,
 stack: []object.Object,
+globals: []object.Object,
 sp: usize,
 
 pub fn init(allocator: std.mem.Allocator, bytecode: ByteCode) !Self {
@@ -24,8 +26,17 @@ pub fn init(allocator: std.mem.Allocator, bytecode: ByteCode) !Self {
         .constants = bytecode.constants,
         .instructions = bytecode.instructions,
         .stack = try allocator.alloc(object.Object, stack_size),
+        .globals = try allocator.alloc(object.Object, global_size),
         .sp = 0,
     };
+}
+
+pub fn initWithGlobalStore(allocator: std.mem.Allocator, bytecode: ByteCode, s: []object.Object) !Self {
+    var vm = try init(allocator, bytecode);
+
+    vm.globals = s;
+
+    return vm;
 }
 
 pub fn run(self: *Self) !void {
@@ -35,6 +46,18 @@ pub fn run(self: *Self) !void {
         const op: code.Opcode = @enumFromInt(self.instructions[ip]);
 
         switch (op) {
+            .get_global => {
+                const global_index = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
+                ip += 2;
+
+                try self.push(self.globals[global_index]);
+            },
+            .set_global => {
+                const global_index = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
+                ip += 2;
+
+                self.globals[global_index] = self.pop();
+            },
             .constant => {
                 const const_index = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
                 ip += 2;
@@ -281,6 +304,19 @@ test "conditionals" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "global let statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "let one = 1; one;", .expected = .{ .integer = 1 } },
+        .{ .input = "let one = 1; let two = 2; one + two;", .expected = .{ .integer = 3 } },
+        .{ .input = "let one = 1; let two = one + one; one + two;", .expected = .{ .integer = 3 } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
@@ -292,7 +328,7 @@ fn runVMTests(allocator: std.mem.Allocator, tests: []const VMTestCase) !void {
     for (tests, 0..) |t, i| {
         const program = try parse(allocator, t.input);
 
-        var compiler = Compiler.init();
+        var compiler = Compiler.init(allocator);
         try compiler.compile(allocator, .{ .program = program });
 
         var vm = try init(allocator, compiler.bytecode());

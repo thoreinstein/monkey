@@ -6,6 +6,7 @@ const EmittedInstruction = @import("helpers.zig").EmittedInstruction;
 
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
+const SymbolTable = @import("symbol_table.zig");
 
 const ast = @import("ast.zig");
 const code = @import("code.zig");
@@ -17,14 +18,28 @@ instructions: std.ArrayList(u8),
 constants: std.ArrayList(object.Object),
 last_instruction: ?EmittedInstruction,
 previous_instruction: ?EmittedInstruction,
+symbol_table: *SymbolTable,
 
-pub fn init() Self {
+pub fn init(allocator: std.mem.Allocator) !Self {
+    const st = try allocator.create(SymbolTable);
+    st.* = SymbolTable.init(allocator);
+
     return Self{
         .constants = std.ArrayList(object.Object).empty,
         .instructions = std.ArrayList(u8).empty,
         .last_instruction = null,
         .previous_instruction = null,
+        .symbol_table = st,
     };
+}
+
+pub fn initWithState(allocator: std.mem.Allocator, s: *SymbolTable, constants: std.ArrayList(object.Object)) !Self {
+    var compiler = try init(allocator);
+
+    compiler.symbol_table = s;
+    compiler.constants = constants;
+
+    return compiler;
 }
 
 pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void {
@@ -32,6 +47,11 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
         .program => |p| for (p.statements.items) |stmt| try self.compile(allocator, .{ .statement = stmt }),
         .expression => |e| {
             switch (e) {
+                .identifier_expression => |ie| {
+                    const symbol = self.symbol_table.resolve(ie.value) orelse return error.SymbolTableLookupFailed;
+
+                    _ = try self.emit(allocator, .get_global, &.{symbol.index});
+                },
                 .if_expression => |ie| {
                     try self.compile(allocator, .{ .expression = ie.condition.?.* });
 
@@ -125,6 +145,12 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
             }
         },
         .statement => |s| switch (s) {
+            .let_statement => |ls| {
+                try self.compile(allocator, .{ .expression = ls.value.?.* });
+
+                const symbol = try self.symbol_table.define(ls.name.value);
+                _ = try self.emit(allocator, .set_global, &.{symbol.index});
+            },
             .block_statement => |bs| {
                 for (bs.statements.items) |stmt| {
                     try self.compile(allocator, .{ .statement = stmt });
@@ -426,11 +452,70 @@ test "conditionals" {
     try runCompilerTests(arena.allocator(), &tests);
 }
 
+test "global let statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input =
+            \\let one = 1;
+            \\let two = 2
+            ,
+            .expected_constants = &.{
+                .{ .integer = 1 },
+                .{ .integer = 2 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .set_global, &.{1}),
+            },
+        },
+        .{
+            .input =
+            \\let one = 1;
+            \\one;
+            ,
+            .expected_constants = &.{
+                .{ .integer = 1 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input =
+            \\let one = 1;
+            \\let two = one;
+            \\two;
+            ,
+            .expected_constants = &.{
+                .{ .integer = 1 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{1}),
+                try code.make(arena.allocator(), .get_global, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
 fn runCompilerTests(allocator: std.mem.Allocator, tests: []const CompilerTestCase) !void {
     for (tests) |t| {
         const program = try parse(allocator, t.input);
 
-        var compiler = init();
+        var compiler = try init(allocator);
         try compiler.compile(allocator, .{ .program = program });
         const bc = compiler.bytecode();
 

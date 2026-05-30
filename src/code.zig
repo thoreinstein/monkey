@@ -4,22 +4,24 @@ const testing = std.testing;
 pub const Instructions = []const u8;
 
 pub const Opcode = enum(u8) {
-    constant,
     add,
-    pop,
-    sub,
-    mul,
-    div,
-    true_,
-    false_,
-    equal,
-    not_equal,
-    greater_than,
-    minus,
     bang,
-    jump_not_truthy,
+    constant,
+    div,
+    equal,
+    false_,
+    get_global,
+    greater_than,
     jump,
+    jump_not_truthy,
+    minus,
+    mul,
+    not_equal,
     null_,
+    pop,
+    set_global,
+    sub,
+    true_,
 };
 
 pub const Definition = struct {
@@ -40,6 +42,7 @@ pub fn lookup(op: Opcode) Definition {
         .div => return .{ .name = "OpDiv", .operand_widths = &.{} },
         .equal => return .{ .name = "OpEqual", .operand_widths = &.{} },
         .false_ => return .{ .name = "OpFalse", .operand_widths = &.{} },
+        .get_global => return .{ .name = "OpGetGlobal", .operand_widths = &.{2} },
         .greater_than => return .{ .name = "OpGreaterThan", .operand_widths = &.{} },
         .jump => return .{ .name = "OpJump", .operand_widths = &.{2} },
         .jump_not_truthy => return .{ .name = "OpJumpNotTruthy", .operand_widths = &.{2} },
@@ -48,6 +51,7 @@ pub fn lookup(op: Opcode) Definition {
         .not_equal => return .{ .name = "OpNotEqual", .operand_widths = &.{} },
         .null_ => return .{ .name = "OpNull", .operand_widths = &.{} },
         .pop => return .{ .name = "OpPop", .operand_widths = &.{} },
+        .set_global => return .{ .name = "OpSetGlobal", .operand_widths = &.{2} },
         .sub => return .{ .name = "OpSub", .operand_widths = &.{} },
         .true_ => return .{ .name = "OpTrue", .operand_widths = &.{} },
     }

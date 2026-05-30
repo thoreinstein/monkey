@@ -1,15 +1,22 @@
 const std = @import("std");
 const io = std.Io;
 
-const Environment = @import("environment.zig");
 const Compiler = @import("compiler.zig");
+const Environment = @import("environment.zig");
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
+const SymbolTable = @import("symbol_table.zig");
 const VM = @import("vm.zig");
+
+const object = @import("object.zig");
 
 const PROMPT = ">> ";
 
 pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?void {
+    const constants = std.ArrayList(object.Object).empty;
+    const globals = try allocator.alloc(object.Object, VM.global_size);
+    var symbol_table = SymbolTable.init(allocator);
+
     while (true) {
         try out.writeAll(PROMPT);
         try out.flush();
@@ -35,7 +42,7 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             continue;
         }
 
-        var compiler = Compiler.init();
+        var compiler = try Compiler.initWithState(allocator, &symbol_table, constants);
 
         compiler.compile(arena.allocator(), .{ .program = program }) catch |err| {
             try out.print("Woops! Compilation failed\n {s}\n", .{@errorName(err)});
@@ -43,7 +50,7 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             continue;
         };
 
-        var machine = try VM.init(arena.allocator(), compiler.bytecode());
+        var machine = try VM.initWithGlobalStore(allocator, compiler.bytecode(), globals);
 
         machine.run() catch |err| {
             try out.print("Woops! Executing bytecode failed\n {s}\n", .{@errorName(err)});
