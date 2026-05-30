@@ -44,6 +44,7 @@ pub fn run(self: *Self) !void {
             .add, .sub, .mul, .div => try self.executeBinaryOperation(op),
             .true_ => try self.push(.{ .boolean = .{ .value = true } }),
             .false_ => try self.push(.{ .boolean = .{ .value = false } }),
+            .equal, .not_equal, .greater_than => try self.executeComparison(op),
             .pop => _ = self.pop(),
         }
     }
@@ -104,6 +105,38 @@ fn executeBinaryIntegerOperation(self: *Self, op: code.Opcode, left: i64, right:
     try self.push(.{ .integer = .{ .value = result } });
 }
 
+fn executeComparison(self: *Self, op: code.Opcode) !void {
+    const right = self.pop();
+    const left = self.pop();
+
+    if (std.mem.eql(u8, object.INTEGER_OBJ, left.kind()) and std.mem.eql(u8, object.INTEGER_OBJ, right.kind())) {
+        try self.executeIntegerComparison(op, left, right);
+
+        return;
+    }
+
+    switch (op) {
+        .equal => try self.push(.{ .boolean = .{ .value = left.boolean.value == right.boolean.value } }),
+        .not_equal => try self.push(.{ .boolean = .{ .value = left.boolean.value != right.boolean.value } }),
+        else => {
+            std.debug.print("unknown operator: {s}\n", .{code.lookup(op).name});
+            return error.UnknowOperator;
+        },
+    }
+}
+
+fn executeIntegerComparison(self: *Self, op: code.Opcode, left: object.Object, right: object.Object) !void {
+    const left_val = left.integer.value;
+    const right_val = right.integer.value;
+
+    switch (op) {
+        .equal => try self.push(.{ .boolean = .{ .value = left_val == right_val } }),
+        .not_equal => try self.push(.{ .boolean = .{ .value = left_val != right_val } }),
+        .greater_than => try self.push(.{ .boolean = .{ .value = left_val > right_val } }),
+        else => return error.UnknowOperator,
+    }
+}
+
 const Expected = union(enum) {
     integer: i64,
     boolean: bool,
@@ -143,6 +176,23 @@ test "boolean expressions" {
     const tests = [_]VMTestCase{
         .{ .input = "true", .expected = .{ .boolean = true } },
         .{ .input = "false", .expected = .{ .boolean = false } },
+        .{ .input = "1 < 2", .expected = .{ .boolean = true } },
+        .{ .input = "1 > 2", .expected = .{ .boolean = false } },
+        .{ .input = "1 < 1", .expected = .{ .boolean = false } },
+        .{ .input = "1 > 1", .expected = .{ .boolean = false } },
+        .{ .input = "1 == 1", .expected = .{ .boolean = true } },
+        .{ .input = "1 != 1", .expected = .{ .boolean = false } },
+        .{ .input = "1 == 2", .expected = .{ .boolean = false } },
+        .{ .input = "1 != 2", .expected = .{ .boolean = true } },
+        .{ .input = "true == true", .expected = .{ .boolean = true } },
+        .{ .input = "false == false", .expected = .{ .boolean = true } },
+        .{ .input = "true == false", .expected = .{ .boolean = false } },
+        .{ .input = "true != false", .expected = .{ .boolean = true } },
+        .{ .input = "false != true", .expected = .{ .boolean = true } },
+        .{ .input = "(1 < 2) == true", .expected = .{ .boolean = true } },
+        .{ .input = "(1 < 2) == false", .expected = .{ .boolean = false } },
+        .{ .input = "(1 > 2) == true", .expected = .{ .boolean = false } },
+        .{ .input = "(1 > 2) == false", .expected = .{ .boolean = true } },
     };
 
     try runVMTests(arena.allocator(), &tests);
@@ -156,7 +206,7 @@ fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
 }
 
 fn runVMTests(allocator: std.mem.Allocator, tests: []const VMTestCase) !void {
-    for (tests) |t| {
+    for (tests, 0..) |t, i| {
         const program = try parse(allocator, t.input);
 
         var compiler = Compiler.init();
@@ -167,6 +217,8 @@ fn runVMTests(allocator: std.mem.Allocator, tests: []const VMTestCase) !void {
         try vm.run();
 
         const stack_elem = vm.lastPoppedStackElem();
+
+        errdefer std.debug.print("Test {d} failed: {s}\n", .{ i + 1, tests[i].input });
 
         try testExpectedObject(t.expected, stack_elem);
     }

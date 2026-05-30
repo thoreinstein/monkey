@@ -12,6 +12,9 @@ pub const Opcode = enum(u8) {
     div,
     true_,
     false_,
+    equal,
+    not_equal,
+    greater_than,
 };
 
 pub const Definition = struct {
@@ -33,6 +36,9 @@ pub fn lookup(op: Opcode) Definition {
         .div => return .{ .name = "OpDiv", .operand_widths = &.{} },
         .true_ => return .{ .name = "OpTrue", .operand_widths = &.{} },
         .false_ => return .{ .name = "OpFalse", .operand_widths = &.{} },
+        .equal => return .{ .name = "OpEqual", .operand_widths = &.{} },
+        .not_equal => return .{ .name = "OpNotEqual", .operand_widths = &.{} },
+        .greater_than => return .{ .name = "OpGreaterThan", .operand_widths = &.{} },
         .pop => return .{ .name = "OpPop", .operand_widths = &.{} },
     }
 }

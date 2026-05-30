@@ -28,6 +28,15 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
         .expression => |e| {
             switch (e) {
                 .infix_expression => |ie| {
+                    if (std.mem.eql(u8, "<", ie.operator)) {
+                        try self.compile(allocator, .{ .expression = ie.right.?.* });
+                        try self.compile(allocator, .{ .expression = ie.left.?.* });
+
+                        _ = try self.emit(allocator, .greater_than, &.{});
+
+                        return;
+                    }
+
                     try self.compile(allocator, .{ .expression = ie.left.?.* });
                     try self.compile(allocator, .{ .expression = ie.right.?.* });
 
@@ -45,6 +54,18 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
 
                     if (std.mem.eql(u8, "/", ie.operator)) {
                         _ = try self.emit(allocator, .div, &.{});
+                    }
+
+                    if (std.mem.eql(u8, ">", ie.operator)) {
+                        _ = try self.emit(allocator, .greater_than, &.{});
+                    }
+
+                    if (std.mem.eql(u8, "==", ie.operator)) {
+                        _ = try self.emit(allocator, .equal, &.{});
+                    }
+
+                    if (std.mem.eql(u8, "!=", ie.operator)) {
+                        _ = try self.emit(allocator, .not_equal, &.{});
                     }
                 },
                 .integer_literal => |il| {
@@ -196,6 +217,66 @@ test "boolean expressions" {
             .expected_constants = &.{},
             .expected_instructions = &.{
                 try code.make(arena.allocator(), .false_, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "1 > 2",
+            .expected_constants = &.{ .{ .integer = 1 }, .{ .integer = 2 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .greater_than, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "1 < 2",
+            .expected_constants = &.{ .{ .integer = 2 }, .{ .integer = 1 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .greater_than, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "1 == 2",
+            .expected_constants = &.{ .{ .integer = 1 }, .{ .integer = 2 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .equal, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "1 != 2",
+            .expected_constants = &.{ .{ .integer = 1 }, .{ .integer = 2 } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .not_equal, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "true == false",
+            .expected_constants = &.{},
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .true_, &.{}),
+                try code.make(arena.allocator(), .false_, &.{}),
+                try code.make(arena.allocator(), .equal, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "true != false",
+            .expected_constants = &.{},
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .true_, &.{}),
+                try code.make(arena.allocator(), .false_, &.{}),
+                try code.make(arena.allocator(), .not_equal, &.{}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
