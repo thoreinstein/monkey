@@ -5,6 +5,7 @@ pub const Instructions = []const u8;
 
 pub const Opcode = enum(u8) {
     add,
+    array,
     bang,
     constant,
     div,
@@ -37,6 +38,7 @@ const Operands = struct {
 pub fn lookup(op: Opcode) Definition {
     switch (op) {
         .add => return .{ .name = "OpAdd", .operand_widths = &.{} },
+        .array => return .{ .name = "OpArray", .operand_widths = &.{2} },
         .bang => return .{ .name = "OpBang", .operand_widths = &.{} },
         .constant => return .{ .name = "OpConstant", .operand_widths = &.{2} },
         .div => return .{ .name = "OpDiv", .operand_widths = &.{} },

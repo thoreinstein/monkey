@@ -48,6 +48,16 @@ pub fn run(self: *Self) !void {
         const op: code.Opcode = @enumFromInt(self.instructions[ip]);
 
         switch (op) {
+            .array => {
+                const num_elem: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
+                ip += 2;
+
+                const array = try self.buildArray(self.sp - num_elem, self.sp);
+
+                self.sp = self.sp - num_elem;
+
+                try self.push(array);
+            },
             .get_global => {
                 const global_index = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
                 ip += 2;
@@ -220,6 +230,17 @@ fn executeMinusOperator(self: *Self) !void {
     return error.UnsupportedObjectForNegation;
 }
 
+fn buildArray(self: *Self, start: usize, end: usize) !object.Object {
+    var elements = std.ArrayList(object.Object).empty;
+
+    var i = start;
+    while (i < end) : (i += 1) {
+        try elements.append(self.allocator, self.stack[i]);
+    }
+
+    return .{ .array = .{ .elements = elements } };
+}
+
 fn isTruthy(obj: object.Object) bool {
     return switch (obj) {
         .boolean => |b| b.value,
@@ -233,6 +254,7 @@ const Expected = union(enum) {
     boolean: bool,
     null_: void,
     string: []const u8,
+    array: []const i64,
 };
 
 const VMTestCase = struct {
@@ -348,6 +370,19 @@ test "strings" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "arrays" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "[]", .expected = .{ .array = &.{} } },
+        .{ .input = "[1, 2, 3]", .expected = .{ .array = &.{ 1, 2, 3 } } },
+        .{ .input = "[1 + 2, 3 * 4, 5 + 6]", .expected = .{ .array = &.{ 3, 12, 11 } } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
@@ -381,6 +416,13 @@ fn testExpectedObject(expected: Expected, actual: object.Object) !void {
         .string => |s| try testStringObject(s, actual),
         .null_ => {
             try testing.expect(actual == .null_);
+        },
+        .array => |a| {
+            try testing.expectEqual(a.len, actual.array.elements.items.len);
+
+            for (a, 0..) |exp, i| {
+                try testIntegerObject(exp, actual.array.elements.items[i]);
+            }
         },
     }
 }
