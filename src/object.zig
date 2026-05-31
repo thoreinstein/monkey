@@ -312,6 +312,7 @@ pub const CompiledFunction = struct {
 
     instructions: code.Instructions,
     num_locals: usize = 0,
+    num_parameters: usize = 0,
 
     pub fn kind(self: Self) []const u8 {
         _ = self;

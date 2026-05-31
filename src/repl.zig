@@ -15,7 +15,7 @@ const PROMPT = ">> ";
 pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?void {
     const constants = std.ArrayList(object.Object).empty;
     const globals = try allocator.alloc(object.Object, VM.global_size);
-    var symbol_table = SymbolTable.init(allocator);
+    const symbol_table = try SymbolTable.init(allocator);
 
     while (true) {
         try out.writeAll(PROMPT);
@@ -42,7 +42,7 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             continue;
         }
 
-        var compiler = try Compiler.initWithState(allocator, &symbol_table, constants);
+        var compiler = try Compiler.initWithState(allocator, symbol_table, constants);
 
         compiler.compile(arena.allocator(), .{ .program = program }) catch |err| {
             try out.print("Woops! Compilation failed\n {s}\n", .{@errorName(err)});

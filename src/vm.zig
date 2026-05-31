@@ -78,17 +78,10 @@ pub fn run(self: *Self) !void {
                 try self.push(.null_);
             },
             .call => {
-                const fn_obj = switch (self.stack[self.sp - 1]) {
-                    .compiled_function => |cf| cf,
-                    else => {
-                        std.debug.print("calling non function", .{});
-                        return error.CallingNonFunction;
-                    },
-                };
+                const num_args = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
+                self.currentFrame().ip += 1;
 
-                const frame = try Frame.init(self.allocator, fn_obj, self.sp);
-                self.pushFrame(frame);
-                self.sp = frame.base_pointer + fn_obj.num_locals;
+                try self.callFunction(num_args);
             },
             .index => {
                 const index = self.pop();
@@ -336,6 +329,22 @@ fn executeHashIndex(self: *Self, hash: object.Object, index: object.Object) !voi
     };
 
     try self.push(pair.value);
+}
+
+fn callFunction(self: *Self, num_args: u8) !void {
+    const fn_obj = switch (self.stack[self.sp - 1 - num_args]) {
+        .compiled_function => |cf| cf,
+        else => {
+            std.debug.print("calling non function", .{});
+            return error.CallingNonFunction;
+        },
+    };
+
+    if (num_args != fn_obj.num_parameters) return error.WrongNumberOfArguments;
+
+    const frame = try Frame.init(self.allocator, fn_obj, self.sp - num_args);
+    self.pushFrame(frame);
+    self.sp = frame.base_pointer + fn_obj.num_locals;
 }
 
 fn buildArray(self: *Self, start: usize, end: usize) !object.Object {
@@ -735,6 +744,108 @@ test "functions with bindings" {
     };
 
     try runVMTests(arena.allocator(), &tests);
+}
+
+test "functions with arguments and bindings" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input =
+            \\let foo = fn(a) { a; };
+            \\foo(4)
+            ,
+            .expected = .{ .integer = 4 },
+        },
+        .{
+            .input =
+            \\let foo = fn(a, b) { a + b; };
+            \\foo(1, 2)
+            ,
+            .expected = .{ .integer = 3 },
+        },
+        .{
+            .input =
+            \\let foo = fn(a, b) {
+            \\  let c = a + b;
+            \\  c;
+            \\};
+            \\foo(1, 2)
+            ,
+            .expected = .{ .integer = 3 },
+        },
+        .{
+            .input =
+            \\let foo = fn(a, b) {
+            \\  let c = a + b;
+            \\  c;
+            \\};
+            \\foo(1, 2) + foo(3, 4);
+            ,
+            .expected = .{ .integer = 10 },
+        },
+        .{
+            .input =
+            \\let foo = fn(a, b) {
+            \\  let c = a + b;
+            \\  c;
+            \\};
+            \\let bar = fn() {
+            \\  foo(1, 2) + foo(3, 4);
+            \\};
+            \\bar();
+            ,
+            .expected = .{ .integer = 10 },
+        },
+        .{
+            .input =
+            \\let global = 10;
+            \\let foo = fn(a, b) {
+            \\  let c = a + b;
+            \\  c + global;
+            \\};
+            \\let bar = fn() {
+            \\  foo(1, 2) + foo(3, 4) + global;
+            \\};
+            \\bar() + global;
+            ,
+            .expected = .{ .integer = 50 },
+        },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "function calls with wrong arguments" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input = "fn() { 1; }(1);",
+            .expected = .{ .string = "wrong number of arguments: want=0, got=1" },
+        },
+        .{
+            .input = "fn(a) { a; }();",
+            .expected = .{ .string = "wrong number of arguments: want=1, got=0" },
+        },
+        .{
+            .input = "fn(a, b) { a + b; }(1);",
+            .expected = .{ .string = "wrong number of arguments: want=2, got=1" },
+        },
+    };
+
+    for (tests) |t| {
+        const progam = try parse(arena.allocator(), t.input);
+        var compiler = try Compiler.init(arena.allocator());
+
+        try compiler.compile(arena.allocator(), .{ .program = progam });
+
+        var vm = try init(arena.allocator(), compiler.bytecode());
+
+        try testing.expectError(error.WrongNumberOfArguments, vm.run());
+    }
 }
 
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {

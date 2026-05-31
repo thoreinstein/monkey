@@ -61,10 +61,18 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                 .call_expression => |ce| {
                     try self.compile(allocator, .{ .expression = ce.function.?.* });
 
-                    _ = try self.emit(allocator, .call, &.{});
+                    for (ce.arguments.items) |arg| {
+                        try self.compile(allocator, .{ .expression = arg.* });
+                    }
+
+                    _ = try self.emit(allocator, .call, &.{ce.arguments.items.len});
                 },
                 .function_literal => |fl| {
                     try self.enterScope(allocator);
+
+                    for (fl.parameters.items) |p| {
+                        _ = try self.symbol_table.define(p.value);
+                    }
 
                     try self.compile(allocator, .{ .statement = .{ .block_statement = fl.body.? } });
 
@@ -80,6 +88,7 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                     const compiledFn: object.CompiledFunction = .{
                         .instructions = instructions,
                         .num_locals = num_locals,
+                        .num_parameters = fl.parameters.items.len,
                     };
 
                     const constant = try self.addConstant(allocator, .{ .compiled_function = compiledFn });
@@ -921,7 +930,7 @@ test "function calls" {
             },
             .expected_instructions = &.{
                 try code.make(arena.allocator(), .constant, &.{1}),
-                try code.make(arena.allocator(), .call, &.{}),
+                try code.make(arena.allocator(), .call, &.{0}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
@@ -941,7 +950,109 @@ test "function calls" {
                 try code.make(arena.allocator(), .constant, &.{1}),
                 try code.make(arena.allocator(), .set_global, &.{0}),
                 try code.make(arena.allocator(), .get_global, &.{0}),
-                try code.make(arena.allocator(), .call, &.{}),
+                try code.make(arena.allocator(), .call, &.{0}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input =
+            \\let oneArg = fn(a) { };
+            \\oneArg(24);
+            ,
+            .expected_constants = &.{
+                .{
+                    .instructions = &.{
+                        try code.make(arena.allocator(), .return_, &.{}),
+                    },
+                },
+                .{ .integer = 24 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .call, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input =
+            \\let manyArg = fn(a, b, c) { };
+            \\manyArg(24, 25, 26);
+            ,
+            .expected_constants = &.{
+                .{
+                    .instructions = &.{
+                        try code.make(arena.allocator(), .return_, &.{}),
+                    },
+                },
+                .{ .integer = 24 },
+                .{ .integer = 25 },
+                .{ .integer = 26 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .constant, &.{3}),
+                try code.make(arena.allocator(), .call, &.{3}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input =
+            \\let oneArg = fn(a) { a };
+            \\oneArg(24);
+            ,
+            .expected_constants = &.{
+                .{
+                    .instructions = &.{
+                        try code.make(arena.allocator(), .get_local, &.{0}),
+                        try code.make(arena.allocator(), .return_value, &.{}),
+                    },
+                },
+                .{ .integer = 24 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .call, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input =
+            \\let manyArg = fn(a, b, c) { a; b; c; };
+            \\manyArg(24, 25, 26);
+            ,
+            .expected_constants = &.{
+                .{
+                    .instructions = &.{
+                        try code.make(arena.allocator(), .get_local, &.{0}),
+                        try code.make(arena.allocator(), .pop, &.{}),
+                        try code.make(arena.allocator(), .get_local, &.{1}),
+                        try code.make(arena.allocator(), .pop, &.{}),
+                        try code.make(arena.allocator(), .get_local, &.{2}),
+                        try code.make(arena.allocator(), .return_value, &.{}),
+                    },
+                },
+                .{ .integer = 24 },
+                .{ .integer = 25 },
+                .{ .integer = 26 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .constant, &.{3}),
+                try code.make(arena.allocator(), .call, &.{3}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },

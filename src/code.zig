@@ -47,7 +47,7 @@ pub fn lookup(op: Opcode) Definition {
         .add => return .{ .name = "OpAdd", .operand_widths = &.{} },
         .array => return .{ .name = "OpArray", .operand_widths = &.{2} },
         .bang => return .{ .name = "OpBang", .operand_widths = &.{} },
-        .call => return .{ .name = "OpCall", .operand_widths = &.{} },
+        .call => return .{ .name = "OpCall", .operand_widths = &.{1} },
         .constant => return .{ .name = "OpConstant", .operand_widths = &.{2} },
         .div => return .{ .name = "OpDiv", .operand_widths = &.{} },
         .equal => return .{ .name = "OpEqual", .operand_widths = &.{} },
