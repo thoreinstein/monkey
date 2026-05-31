@@ -48,6 +48,16 @@ pub fn run(self: *Self) !void {
         const op: code.Opcode = @enumFromInt(self.instructions[ip]);
 
         switch (op) {
+            .hash => {
+                const num_elem: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
+                ip += 2;
+
+                const hash = try self.buildHash(self.sp - num_elem, self.sp);
+
+                self.sp = self.sp - num_elem;
+
+                try self.push(hash);
+            },
             .array => {
                 const num_elem: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
                 ip += 2;
@@ -241,6 +251,24 @@ fn buildArray(self: *Self, start: usize, end: usize) !object.Object {
     return .{ .array = .{ .elements = elements } };
 }
 
+fn buildHash(self: *Self, start: usize, end: usize) !object.Object {
+    var hashedPairs = std.AutoHashMap(object.HashKey, object.HashPair).init(self.allocator);
+
+    var i = start;
+    while (i < end) : (i += 2) {
+        const key = self.stack[i];
+        const value = self.stack[i + 1];
+
+        const pair = object.HashPair{ .key = key, .value = value };
+
+        const hashed = key.hashKey() orelse return error.ObjectNotHashable;
+
+        try hashedPairs.put(hashed, pair);
+    }
+
+    return .{ .hash = .{ .pairs = hashedPairs } };
+}
+
 fn isTruthy(obj: object.Object) bool {
     return switch (obj) {
         .boolean => |b| b.value,
@@ -255,6 +283,7 @@ const Expected = union(enum) {
     null_: void,
     string: []const u8,
     array: []const i64,
+    hash: []const struct { key: object.HashKey, value: i64 },
 };
 
 const VMTestCase = struct {
@@ -383,6 +412,31 @@ test "arrays" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "hashes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "{}", .expected = .{ .hash = &.{} } },
+        .{
+            .input = "{1: 2, 2: 3}",
+            .expected = .{ .hash = &.{
+                .{ .key = (object.Integer{ .value = 1 }).hashKey(), .value = 2 },
+                .{ .key = (object.Integer{ .value = 2 }).hashKey(), .value = 3 },
+            } },
+        },
+        .{
+            .input = "{1 + 1: 2 * 2, 3 + 3: 4 * 4}",
+            .expected = .{ .hash = &.{
+                .{ .key = (object.Integer{ .value = 2 }).hashKey(), .value = 4 },
+                .{ .key = (object.Integer{ .value = 6 }).hashKey(), .value = 16 },
+            } },
+        },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
@@ -422,6 +476,26 @@ fn testExpectedObject(expected: Expected, actual: object.Object) !void {
 
             for (a, 0..) |exp, i| {
                 try testIntegerObject(exp, actual.array.elements.items[i]);
+            }
+        },
+        .hash => |h| {
+            const hash_obj = switch (actual) {
+                .hash => |ha| ha,
+                else => {
+                    std.debug.print("object is not Hash, got={s}", .{@tagName(actual)});
+                    return error.WrongObjectType;
+                },
+            };
+
+            try testing.expectEqual(h.len, hash_obj.pairs.count());
+
+            for (h) |pair| {
+                const got = hash_obj.pairs.get(pair.key) orelse {
+                    std.debug.print("no pair for given key\n", .{});
+                    return error.NoPairForKey;
+                };
+
+                try testIntegerObject(pair.value, got.value);
             }
         },
     }
