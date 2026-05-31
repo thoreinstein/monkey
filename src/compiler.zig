@@ -47,6 +47,13 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
         .program => |p| for (p.statements.items) |stmt| try self.compile(allocator, .{ .statement = stmt }),
         .expression => |e| {
             switch (e) {
+                .string_literal => |sl| {
+                    const str: object.String = .{ .value = sl.value };
+
+                    const constant = try self.addConstant(allocator, .{ .string = str });
+
+                    _ = try self.emit(allocator, .constant, &.{constant});
+                },
                 .identifier_expression => |ie| {
                     const symbol = self.symbol_table.resolve(ie.value) orelse return error.SymbolTableLookupFailed;
 
@@ -238,6 +245,7 @@ fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
 
 const ExpectedConstants = union(enum) {
     integer: i64,
+    string: []const u8,
 };
 
 const CompilerTestCase = struct {
@@ -511,6 +519,34 @@ test "global let statements" {
     try runCompilerTests(arena.allocator(), &tests);
 }
 
+test "strings" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "\"monkey\"",
+            .expected_constants = &.{.{ .string = "monkey" }},
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "\"mon\" + \"key\"",
+            .expected_constants = &.{ .{ .string = "mon" }, .{ .string = "key" } },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .add, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
 fn runCompilerTests(allocator: std.mem.Allocator, tests: []const CompilerTestCase) !void {
     for (tests) |t| {
         const program = try parse(allocator, t.input);
@@ -548,6 +584,7 @@ fn testConstants(expected: []const ExpectedConstants, actual: []object.Object) !
     for (expected, 0..) |constant, i| {
         switch (constant) {
             .integer => |v| try testIntegerObject(v, actual[i]),
+            .string => |v| try testStringObject(v, actual[i]),
         }
     }
 }
@@ -562,4 +599,16 @@ fn testIntegerObject(expected: i64, actual: object.Object) !void {
     };
 
     try testing.expectEqual(expected, result.value);
+}
+
+fn testStringObject(expected: []const u8, actual: object.Object) !void {
+    const result = switch (actual) {
+        .string => |s| s,
+        else => {
+            std.debug.print("object is not String. got={s}", .{@tagName(actual)});
+            return error.WrongObjectType;
+        },
+    };
+
+    try testing.expectEqualStrings(expected, result.value);
 }

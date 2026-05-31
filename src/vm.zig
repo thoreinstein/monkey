@@ -15,6 +15,7 @@ const Self = @This();
 const stack_size: usize = 2048;
 pub const global_size: usize = 65536;
 
+allocator: std.mem.Allocator,
 constants: []object.Object,
 instructions: code.Instructions,
 stack: []object.Object,
@@ -23,6 +24,7 @@ sp: usize,
 
 pub fn init(allocator: std.mem.Allocator, bytecode: ByteCode) !Self {
     return .{
+        .allocator = allocator,
         .constants = bytecode.constants,
         .instructions = bytecode.instructions,
         .stack = try allocator.alloc(object.Object, stack_size),
@@ -116,27 +118,42 @@ fn executeBinaryOperation(self: *Self, op: code.Opcode) !void {
     const right = self.pop();
     const left = self.pop();
 
-    const left_value = switch (left) {
-        .integer => |i| i,
-        else => return error.NotIntegerObject,
-    };
+    const left_kind = left.kind();
+    const right_kind = right.kind();
 
-    const right_value = switch (right) {
-        .integer => |i| i,
-        else => return error.NotIntegerObject,
-    };
+    if (std.mem.eql(u8, object.INTEGER_OBJ, left_kind) and std.mem.eql(u8, object.INTEGER_OBJ, right_kind)) {
+        return try self.executeBinaryIntegerOperation(op, left, right);
+    }
 
-    try self.executeBinaryIntegerOperation(op, left_value.value, right_value.value);
+    if (std.mem.eql(u8, object.STRING_OBJ, left_kind) and std.mem.eql(u8, object.STRING_OBJ, right_kind)) {
+        return try self.executeBinaryStringOperation(op, left, right);
+    }
+
+    return error.UnsupportedBinaryOperation;
 }
 
-fn executeBinaryIntegerOperation(self: *Self, op: code.Opcode, left: i64, right: i64) !void {
+fn executeBinaryStringOperation(self: *Self, op: code.Opcode, left: object.Object, right: object.Object) !void {
+    if (op != .add) return error.UnknownStringOperator;
+
+    const left_value = left.string.value;
+    const right_value = right.string.value;
+
+    const val = try std.mem.concat(self.allocator, u8, &.{ left_value, right_value });
+
+    try self.push(.{ .string = .{ .value = val } });
+}
+
+fn executeBinaryIntegerOperation(self: *Self, op: code.Opcode, left: object.Object, right: object.Object) !void {
+    const left_value = left.integer.value;
+    const right_value = right.integer.value;
+
     var result: i64 = 0;
 
     switch (op) {
-        .add => result = left + right,
-        .sub => result = left - right,
-        .mul => result = left * right,
-        .div => result = @divTrunc(left, right),
+        .add => result = left_value + right_value,
+        .sub => result = left_value - right_value,
+        .mul => result = left_value * right_value,
+        .div => result = @divTrunc(left_value, right_value),
         else => return error.UnknownIntegerOperation,
     }
 
@@ -215,6 +232,7 @@ const Expected = union(enum) {
     integer: i64,
     boolean: bool,
     null_: void,
+    string: []const u8,
 };
 
 const VMTestCase = struct {
@@ -317,6 +335,19 @@ test "global let statements" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "strings" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "\"monkey\"", .expected = .{ .string = "monkey" } },
+        .{ .input = "\"mon\" + \"key\"", .expected = .{ .string = "monkey" } },
+        .{ .input = "\"mon\" + \"key\" + \"banana\"", .expected = .{ .string = "monkeybanana" } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
@@ -328,7 +359,7 @@ fn runVMTests(allocator: std.mem.Allocator, tests: []const VMTestCase) !void {
     for (tests, 0..) |t, i| {
         const program = try parse(allocator, t.input);
 
-        var compiler = Compiler.init(allocator);
+        var compiler = try Compiler.init(allocator);
         try compiler.compile(allocator, .{ .program = program });
 
         var vm = try init(allocator, compiler.bytecode());
@@ -347,6 +378,7 @@ fn testExpectedObject(expected: Expected, actual: object.Object) !void {
     switch (expected) {
         .integer => |i| try testIntegerObject(i, actual),
         .boolean => |b| try testBooleanObject(b, actual),
+        .string => |s| try testStringObject(s, actual),
         .null_ => {
             try testing.expect(actual == .null_);
         },
@@ -375,4 +407,16 @@ fn testBooleanObject(expected: bool, actual: object.Object) !void {
     };
 
     try testing.expectEqual(expected, bool_obj.value);
+}
+
+fn testStringObject(expected: []const u8, actual: object.Object) !void {
+    const str_obj = switch (actual) {
+        .string => |s| s,
+        else => {
+            std.debug.print("object is not String, got={s}", .{@tagName(actual)});
+            return error.WrongObjectType;
+        },
+    };
+
+    try testing.expectEqualStrings(expected, str_obj.value);
 }
