@@ -311,6 +311,7 @@ pub const CompiledFunction = struct {
     const Self = @This();
 
     instructions: code.Instructions,
+    num_locals: usize = 0,
 
     pub fn kind(self: Self) []const u8 {
         _ = self;

@@ -24,9 +24,6 @@ scopes: std.ArrayList(CompilationScope),
 symbol_table: *SymbolTable,
 
 pub fn init(allocator: std.mem.Allocator) !Self {
-    const st = try allocator.create(SymbolTable);
-    st.* = SymbolTable.init(allocator);
-
     const mainScope: CompilationScope = .{
         .instructions = std.ArrayList(u8).empty,
         .last_instruction = null,
@@ -43,7 +40,7 @@ pub fn init(allocator: std.mem.Allocator) !Self {
         .previous_instruction = null,
         .scope_index = 0,
         .scopes = scopes,
-        .symbol_table = st,
+        .symbol_table = try SymbolTable.init(allocator),
     };
 }
 
@@ -77,9 +74,13 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                         _ = try self.emit(allocator, .return_, &.{});
                     }
 
-                    const instructions = self.leaveScope();
+                    const num_locals = self.symbol_table.num_definitions;
+                    const instructions = try self.leaveScope();
 
-                    const compiledFn: object.CompiledFunction = .{ .instructions = instructions };
+                    const compiledFn: object.CompiledFunction = .{
+                        .instructions = instructions,
+                        .num_locals = num_locals,
+                    };
 
                     const constant = try self.addConstant(allocator, .{ .compiled_function = compiledFn });
 
@@ -116,7 +117,11 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                 .identifier_expression => |ie| {
                     const symbol = self.symbol_table.resolve(ie.value) orelse return error.SymbolTableLookupFailed;
 
-                    _ = try self.emit(allocator, .get_global, &.{symbol.index});
+                    if (symbol.scope == .global) {
+                        _ = try self.emit(allocator, .get_global, &.{symbol.index});
+                    } else {
+                        _ = try self.emit(allocator, .get_local, &.{symbol.index});
+                    }
                 },
                 .if_expression => |ie| {
                     try self.compile(allocator, .{ .expression = ie.condition.?.* });
@@ -219,7 +224,12 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                 try self.compile(allocator, .{ .expression = ls.value.?.* });
 
                 const symbol = try self.symbol_table.define(ls.name.value);
-                _ = try self.emit(allocator, .set_global, &.{symbol.index});
+
+                if (symbol.scope == .global) {
+                    _ = try self.emit(allocator, .set_global, &.{symbol.index});
+                } else {
+                    _ = try self.emit(allocator, .set_local, &.{symbol.index});
+                }
             },
             .block_statement => |bs| {
                 for (bs.statements.items) |stmt| {
@@ -252,13 +262,16 @@ fn enterScope(self: *Self, allocator: std.mem.Allocator) !void {
     try self.scopes.append(allocator, scope);
 
     self.scope_index += 1;
+
+    self.symbol_table = try SymbolTable.initEnclosed(allocator, self.symbol_table);
 }
 
-fn leaveScope(self: *Self) code.Instructions {
+fn leaveScope(self: *Self) !code.Instructions {
     const instructions = self.currentInstructions();
 
     self.scopes.shrinkRetainingCapacity(self.scopes.items.len - 1);
     self.scope_index -= 1;
+    self.symbol_table = self.symbol_table.outer orelse return error.UnableToLeaveScope;
 
     return instructions;
 }
@@ -937,12 +950,90 @@ test "function calls" {
     try runCompilerTests(arena.allocator(), &tests);
 }
 
+test "let statement scopes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input =
+            \\let num = 55;
+            \\fn() { num }
+            ,
+            .expected_constants = &.{
+                .{ .integer = 55 },
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .get_global, &.{0}),
+                    try code.make(arena.allocator(), .return_value, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input =
+            \\fn() {
+            \\  let num = 55;
+            \\  num
+            \\}
+            ,
+            .expected_constants = &.{
+                .{ .integer = 55 },
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .constant, &.{0}),
+                    try code.make(arena.allocator(), .set_local, &.{0}),
+                    try code.make(arena.allocator(), .get_local, &.{0}),
+                    try code.make(arena.allocator(), .return_value, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input =
+            \\fn() {
+            \\  let a = 55;
+            \\  let b = 77;
+            \\  a + b
+            \\}
+            ,
+            .expected_constants = &.{
+                .{ .integer = 55 },
+                .{ .integer = 77 },
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .constant, &.{0}),
+                    try code.make(arena.allocator(), .set_local, &.{0}),
+                    try code.make(arena.allocator(), .constant, &.{1}),
+                    try code.make(arena.allocator(), .set_local, &.{1}),
+                    try code.make(arena.allocator(), .get_local, &.{0}),
+                    try code.make(arena.allocator(), .get_local, &.{1}),
+                    try code.make(arena.allocator(), .add, &.{}),
+                    try code.make(arena.allocator(), .return_value, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
 test "compiler scopes" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     var compiler = try init(arena.allocator());
     try testing.expectEqual(@as(usize, 0), compiler.scope_index);
+    const global = compiler.symbol_table;
 
     _ = try compiler.emit(arena.allocator(), .mul, &.{});
 
@@ -956,8 +1047,14 @@ test "compiler scopes" {
     const last = compiler.scopes.items[compiler.scope_index].last_instruction;
     try testing.expectEqual(code.Opcode.sub, last.?.opcode);
 
-    _ = compiler.leaveScope();
+    try testing.expect(std.meta.eql(compiler.symbol_table.outer, global));
+
+    _ = try compiler.leaveScope();
     try testing.expectEqual(@as(usize, 0), compiler.scope_index);
+
+    try testing.expect(std.meta.eql(compiler.symbol_table, global));
+
+    try testing.expectEqual(null, compiler.symbol_table.outer);
 
     _ = try compiler.emit(arena.allocator(), .add, &.{});
     try testing.expectEqual(@as(usize, 2), compiler.scopes.items[compiler.scope_index].instructions.items.len);

@@ -13,6 +13,7 @@ pub const Opcode = enum(u8) {
     equal,
     false_,
     get_global,
+    get_local,
     greater_than,
     hash,
     index,
@@ -26,6 +27,7 @@ pub const Opcode = enum(u8) {
     return_,
     return_value,
     set_global,
+    set_local,
     sub,
     true_,
 };
@@ -51,6 +53,7 @@ pub fn lookup(op: Opcode) Definition {
         .equal => return .{ .name = "OpEqual", .operand_widths = &.{} },
         .false_ => return .{ .name = "OpFalse", .operand_widths = &.{} },
         .get_global => return .{ .name = "OpGetGlobal", .operand_widths = &.{2} },
+        .get_local => return .{ .name = "OpGetLocal", .operand_widths = &.{1} },
         .greater_than => return .{ .name = "OpGreaterThan", .operand_widths = &.{} },
         .hash => return .{ .name = "OpHash", .operand_widths = &.{2} },
         .index => return .{ .name = "OpIndex", .operand_widths = &.{} },
@@ -64,6 +67,7 @@ pub fn lookup(op: Opcode) Definition {
         .return_ => return .{ .name = "OpReturn", .operand_widths = &.{} },
         .return_value => return .{ .name = "OpReturnValue", .operand_widths = &.{} },
         .set_global => return .{ .name = "OpSetGlobal", .operand_widths = &.{2} },
+        .set_local => return .{ .name = "OpSetLocal", .operand_widths = &.{1} },
         .sub => return .{ .name = "OpSub", .operand_widths = &.{} },
         .true_ => return .{ .name = "OpTrue", .operand_widths = &.{} },
     }
@@ -86,6 +90,7 @@ pub fn make(allocator: std.mem.Allocator, op: Opcode, operands: []const usize) !
         const width = def.operand_widths[i];
         switch (width) {
             2 => std.mem.writeInt(u16, instruction[offset..][0..2], @intCast(o), .big),
+            1 => instruction[offset] = @intCast(o),
             else => {},
         }
         offset += width;
@@ -101,6 +106,7 @@ pub fn readOperands(allocator: std.mem.Allocator, def: Definition, ins: Instruct
     for (def.operand_widths, 0..) |width, i| {
         switch (width) {
             2 => operands[i] = std.mem.readInt(u16, ins[offset..][0..2], .big),
+            1 => operands[i] = std.mem.readInt(u8, ins[offset..][0..1], .big),
             else => {},
         }
 
@@ -159,6 +165,7 @@ test "make" {
     }{
         .{ .op = .constant, .operands = &.{65534}, .expected = &.{ @intFromEnum(Opcode.constant), 255, 254 } },
         .{ .op = .add, .operands = &.{}, .expected = &.{@intFromEnum(Opcode.add)} },
+        .{ .op = .get_local, .operands = &.{255}, .expected = &.{ @intFromEnum(Opcode.get_local), 255 } },
     };
 
     for (tests) |t| {
@@ -179,14 +186,16 @@ test "instructions string" {
 
     const instructions = [_]Instructions{
         try make(arena.allocator(), .add, &.{}),
+        try make(arena.allocator(), .get_local, &.{1}),
         try make(arena.allocator(), .constant, &.{2}),
         try make(arena.allocator(), .constant, &.{65535}),
     };
 
     const expected =
         \\0000 OpAdd
-        \\0001 OpConstant 2
-        \\0004 OpConstant 65535
+        \\0001 OpGetLocal 1
+        \\0003 OpConstant 2
+        \\0006 OpConstant 65535
         \\
     ;
 
@@ -209,6 +218,7 @@ test "read operands" {
         bytes_read: usize,
     }{
         .{ .op = .constant, .operands = &.{65535}, .bytes_read = 2 },
+        .{ .op = .get_local, .operands = &.{255}, .bytes_read = 1 },
     };
 
     for (tests) |t| {

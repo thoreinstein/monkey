@@ -7,13 +7,15 @@ const Self = @This();
 
 func: object.CompiledFunction,
 ip: i64,
+base_pointer: usize,
 
-pub fn init(allocator: std.mem.Allocator, func: object.CompiledFunction) !*Self {
+pub fn init(allocator: std.mem.Allocator, func: object.CompiledFunction, base_pointer: usize) !*Self {
     const new = try allocator.create(Self);
 
     new.* = .{
         .func = func,
         .ip = -1,
+        .base_pointer = base_pointer,
     };
 
     return new;

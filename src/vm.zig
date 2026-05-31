@@ -30,7 +30,7 @@ pub fn init(allocator: std.mem.Allocator, bytecode: ByteCode) !Self {
         .instructions = bytecode.instructions,
     };
 
-    const main_frame = try Frame.init(allocator, main_fn);
+    const main_frame = try Frame.init(allocator, main_fn, 0);
 
     const frames = try allocator.alloc(*Frame, max_frames);
     frames[0] = main_frame;
@@ -63,19 +63,19 @@ pub fn run(self: *Self) !void {
         const op: code.Opcode = @enumFromInt(ins[ip]);
 
         switch (op) {
-            .return_ => {
-                _ = self.popFrame();
-                _ = self.pop();
-
-                try self.push(.null_);
-            },
             .return_value => {
                 const rv = self.pop();
 
-                _ = self.popFrame();
-                _ = self.pop();
+                const frame = self.popFrame();
+                self.sp = frame.base_pointer - 1;
 
                 try self.push(rv);
+            },
+            .return_ => {
+                const frame = self.popFrame();
+                self.sp = frame.base_pointer - 1;
+
+                try self.push(.null_);
             },
             .call => {
                 const fn_obj = switch (self.stack[self.sp - 1]) {
@@ -86,8 +86,9 @@ pub fn run(self: *Self) !void {
                     },
                 };
 
-                const frame = try Frame.init(self.allocator, fn_obj);
+                const frame = try Frame.init(self.allocator, fn_obj, self.sp);
                 self.pushFrame(frame);
+                self.sp = frame.base_pointer + fn_obj.num_locals;
             },
             .index => {
                 const index = self.pop();
@@ -121,11 +122,27 @@ pub fn run(self: *Self) !void {
 
                 try self.push(self.globals[global_index]);
             },
+            .get_local => {
+                const local_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
+                self.currentFrame().ip += 1;
+
+                const frame = self.currentFrame();
+
+                try self.push(self.stack[frame.base_pointer + local_index]);
+            },
             .set_global => {
                 const global_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
                 self.currentFrame().ip += 2;
 
                 self.globals[global_index] = self.pop();
+            },
+            .set_local => {
+                const local_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
+                self.currentFrame().ip += 1;
+
+                const frame = self.currentFrame();
+
+                self.stack[frame.base_pointer + local_index] = self.pop();
             },
             .constant => {
                 const const_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
@@ -649,6 +666,71 @@ test "first class functions" {
             \\bar()();
             ,
             .expected = .{ .integer = 1 },
+        },
+        .{
+            .input =
+            \\let foo = fn() {
+            \\  let baz = fn() { 1; };
+            \\  baz;
+            \\};
+            \\foo()();
+            ,
+            .expected = .{ .integer = 1 },
+        },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "functions with bindings" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input =
+            \\let foo = fn() { let one = 1; one };
+            \\foo();
+            ,
+            .expected = .{ .integer = 1 },
+        },
+        .{
+            .input =
+            \\let foo = fn() { let one = 1; let two = 2; one + two };
+            \\foo();
+            ,
+            .expected = .{ .integer = 3 },
+        },
+        .{
+            .input =
+            \\let foo = fn() { let one = 1; let two = 2; one + two };
+            \\let bar = fn() { let three = 3; let four = 4; three + four };
+            \\foo() + bar();
+            ,
+            .expected = .{ .integer = 10 },
+        },
+        .{
+            .input =
+            \\let foo = fn() { let foobar = 50; foobar; };
+            \\let bar = fn() { let foobar = 100; foobar; };
+            \\foo() + bar();
+            ,
+            .expected = .{ .integer = 150 },
+        },
+        .{
+            .input =
+            \\let global = 50
+            \\let foo = fn() {
+            \\  let num = 1;
+            \\  global - num
+            \\}
+            \\let bar = fn() {
+            \\  let num = 2;
+            \\  global - num
+            \\}
+            \\foo() + bar();
+            ,
+            .expected = .{ .integer = 97 },
         },
     };
 

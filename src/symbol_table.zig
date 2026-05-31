@@ -3,6 +3,7 @@ const testing = std.testing;
 
 pub const SymbolScope = enum {
     global,
+    local,
 };
 
 pub const Symbol = struct {
@@ -15,20 +16,34 @@ const Self = @This();
 
 store: std.StringHashMap(Symbol),
 num_definitions: usize = 0,
+outer: ?*Self = null,
 
-pub fn init(allocator: std.mem.Allocator) Self {
-    return .{
+pub fn init(allocator: std.mem.Allocator) !*Self {
+    const new = try allocator.create(Self);
+
+    new.* = Self{
         .store = std.StringHashMap(Symbol).init(allocator),
     };
+
+    return new;
+}
+
+pub fn initEnclosed(allocator: std.mem.Allocator, outer: *Self) !*Self {
+    var s = try init(allocator);
+    s.outer = outer;
+
+    return s;
 }
 
 pub fn define(self: *Self, name: []const u8) !Symbol {
     const owned = try self.store.allocator.dupe(u8, name);
 
+    const scope: SymbolScope = if (self.outer == null) .global else .local;
+
     const symbol: Symbol = .{
         .name = owned,
         .index = self.num_definitions,
-        .scope = .global,
+        .scope = scope,
     };
 
     try self.store.put(owned, symbol);
@@ -39,14 +54,18 @@ pub fn define(self: *Self, name: []const u8) !Symbol {
 }
 
 pub fn resolve(self: *const Self, name: []const u8) ?Symbol {
-    return self.store.get(name);
+    return self.store.get(name) orelse {
+        if (self.outer) |outer| return outer.resolve(name);
+
+        return null;
+    };
 }
 
 test "define" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    var global = init(arena.allocator());
+    var global = try init(arena.allocator());
 
     const a = try global.define("a");
 
@@ -59,13 +78,41 @@ test "define" {
     try testing.expectEqualStrings("b", b.name);
     try testing.expectEqual(SymbolScope.global, b.scope);
     try testing.expectEqual(@as(usize, 1), b.index);
+
+    var first = try initEnclosed(arena.allocator(), global);
+
+    const c = try first.define("c");
+
+    try testing.expectEqualStrings("c", c.name);
+    try testing.expectEqual(SymbolScope.local, c.scope);
+    try testing.expectEqual(@as(usize, 0), c.index);
+
+    const d = try first.define("d");
+
+    try testing.expectEqualStrings("d", d.name);
+    try testing.expectEqual(SymbolScope.local, d.scope);
+    try testing.expectEqual(@as(usize, 1), d.index);
+
+    var second = try initEnclosed(arena.allocator(), global);
+
+    const e = try second.define("e");
+
+    try testing.expectEqualStrings("e", e.name);
+    try testing.expectEqual(SymbolScope.local, e.scope);
+    try testing.expectEqual(@as(usize, 0), e.index);
+
+    const f = try second.define("f");
+
+    try testing.expectEqualStrings("f", f.name);
+    try testing.expectEqual(SymbolScope.local, f.scope);
+    try testing.expectEqual(@as(usize, 1), f.index);
 }
 
 test "resolve global" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    var global = init(arena.allocator());
+    var global = try init(arena.allocator());
     _ = try global.define("a");
     _ = try global.define("b");
 
@@ -80,5 +127,84 @@ test "resolve global" {
         try testing.expectEqualStrings(sym.name, result.name);
         try testing.expectEqual(sym.scope, result.scope);
         try testing.expectEqual(sym.index, result.index);
+    }
+}
+
+test "resolve local" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var global = try init(arena.allocator());
+    _ = try global.define("a");
+    _ = try global.define("b");
+
+    var local = try initEnclosed(arena.allocator(), global);
+    _ = try local.define("c");
+    _ = try local.define("d");
+
+    const expected = [_]Symbol{
+        .{ .name = "a", .scope = .global, .index = 0 },
+        .{ .name = "b", .scope = .global, .index = 1 },
+        .{ .name = "c", .scope = .local, .index = 0 },
+        .{ .name = "d", .scope = .local, .index = 1 },
+    };
+
+    for (expected) |sym| {
+        const result = local.resolve(sym.name) orelse return error.SymbolNotInScope;
+
+        try testing.expectEqualStrings(sym.name, result.name);
+        try testing.expectEqual(sym.scope, result.scope);
+        try testing.expectEqual(sym.index, result.index);
+    }
+}
+
+test "resolve nested local" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var global = try init(arena.allocator());
+    _ = try global.define("a");
+    _ = try global.define("b");
+
+    var first = try initEnclosed(arena.allocator(), global);
+    _ = try first.define("c");
+    _ = try first.define("d");
+
+    var second = try initEnclosed(arena.allocator(), first);
+    _ = try second.define("e");
+    _ = try second.define("f");
+
+    const tests = [_]struct {
+        table: *Self,
+        expected_symbols: []const Symbol,
+    }{
+        .{
+            .table = first,
+            .expected_symbols = &.{
+                .{ .name = "a", .scope = .global, .index = 0 },
+                .{ .name = "b", .scope = .global, .index = 1 },
+                .{ .name = "c", .scope = .local, .index = 0 },
+                .{ .name = "d", .scope = .local, .index = 1 },
+            },
+        },
+        .{
+            .table = second,
+            .expected_symbols = &.{
+                .{ .name = "a", .scope = .global, .index = 0 },
+                .{ .name = "b", .scope = .global, .index = 1 },
+                .{ .name = "e", .scope = .local, .index = 0 },
+                .{ .name = "f", .scope = .local, .index = 1 },
+            },
+        },
+    };
+
+    for (tests) |t| {
+        for (t.expected_symbols) |sym| {
+            const result = t.table.resolve(sym.name) orelse return error.SymbolNotInScope;
+
+            try testing.expectEqualStrings(sym.name, result.name);
+            try testing.expectEqual(sym.scope, result.scope);
+            try testing.expectEqual(sym.index, result.index);
+        }
     }
 }
