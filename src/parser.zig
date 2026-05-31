@@ -147,7 +147,7 @@ fn parseReturnStatement(self: *Self) !?ast.ReturnStatement {
 
     statement.return_value = try self.parseExpression(.lowest);
 
-    while (!self.currentTokenIs(.semicolon)) self.nextToken();
+    if (self.peekTokenIs(.semicolon)) self.nextToken();
 
     return statement;
 }

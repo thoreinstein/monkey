@@ -12,3 +12,9 @@ pub const EmittedInstruction = struct {
     opcode: code.Opcode,
     position: usize,
 };
+
+pub const CompilationScope = struct {
+    instructions: std.ArrayList(u8),
+    last_instruction: ?EmittedInstruction,
+    previous_instruction: ?EmittedInstruction,
+};

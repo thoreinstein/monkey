@@ -2,7 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 
 const Environment = @import("environment.zig");
+
 const ast = @import("ast.zig");
+const code = @import("code.zig");
 
 pub const INTEGER_OBJ = "INTEGER";
 pub const BOOLEAN_OBJ = "BOOLEAN";
@@ -14,6 +16,7 @@ pub const STRING_OBJ = "STRING";
 pub const BUILTIN_OBJ = "BUILTIN";
 pub const ARRAY_OBJ = "ARRAY";
 pub const HASH_OBJ = "HASH";
+pub const COMPILED_FUNCTION_OBJ = "COMPILED_FUNCTION_OBJ";
 
 const BuiltinFunction = *const fn (allocator: std.mem.Allocator, args: []Object) error{OutOfMemory}!?Object;
 
@@ -26,16 +29,17 @@ pub const ObjectType = enum {
 pub const Object = union(enum) {
     const Self = @This();
 
-    integer: Integer,
+    array: Array,
     boolean: Boolean,
-    null_: Null,
-    return_value: ReturnValue,
+    builtin: Builtin,
+    compiled_function: CompiledFunction,
     error_: Error,
     function: Function,
-    string: String,
-    builtin: Builtin,
-    array: Array,
     hash: Hash,
+    integer: Integer,
+    null_: Null,
+    return_value: ReturnValue,
+    string: String,
 
     pub fn kind(self: Self) []const u8 {
         return switch (self) {
@@ -300,6 +304,22 @@ pub const Hash = struct {
         try w.writeAll("}");
 
         return aw.toOwnedSlice();
+    }
+};
+
+pub const CompiledFunction = struct {
+    const Self = @This();
+
+    instructions: code.Instructions,
+
+    pub fn kind(self: Self) []const u8 {
+        _ = self;
+
+        return COMPILED_FUNCTION_OBJ;
+    }
+
+    pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "CompiledFunction{}", .{self});
     }
 };
 

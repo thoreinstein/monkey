@@ -1,10 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
 
+const ByteCode = @import("helpers.zig").ByteCode;
 const Compiler = @import("compiler.zig");
+const Frame = @import("frame.zig");
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
-const ByteCode = @import("helpers.zig").ByteCode;
 
 const ast = @import("ast.zig");
 const code = @import("code.zig");
@@ -12,24 +13,36 @@ const object = @import("object.zig");
 
 const Self = @This();
 
+const max_frames: usize = 1024;
 const stack_size: usize = 2048;
 pub const global_size: usize = 65536;
 
 allocator: std.mem.Allocator,
 constants: []object.Object,
-instructions: code.Instructions,
-stack: []object.Object,
+frames: []*Frame,
+frames_index: usize,
 globals: []object.Object,
 sp: usize,
+stack: []object.Object,
 
 pub fn init(allocator: std.mem.Allocator, bytecode: ByteCode) !Self {
+    const main_fn: object.CompiledFunction = .{
+        .instructions = bytecode.instructions,
+    };
+
+    const main_frame = try Frame.init(allocator, main_fn);
+
+    const frames = try allocator.alloc(*Frame, max_frames);
+    frames[0] = main_frame;
+
     return .{
         .allocator = allocator,
         .constants = bytecode.constants,
-        .instructions = bytecode.instructions,
-        .stack = try allocator.alloc(object.Object, stack_size),
+        .frames = frames,
+        .frames_index = 1,
         .globals = try allocator.alloc(object.Object, global_size),
         .sp = 0,
+        .stack = try allocator.alloc(object.Object, stack_size),
     };
 }
 
@@ -42,12 +55,40 @@ pub fn initWithGlobalStore(allocator: std.mem.Allocator, bytecode: ByteCode, s: 
 }
 
 pub fn run(self: *Self) !void {
-    var ip: usize = 0;
+    while (self.currentFrame().ip < @as(i64, @intCast(self.currentFrame().instructions().len)) - 1) {
+        self.currentFrame().ip += 1;
 
-    while (ip < self.instructions.len) : (ip += 1) {
-        const op: code.Opcode = @enumFromInt(self.instructions[ip]);
+        const ip: usize = @intCast(self.currentFrame().ip);
+        const ins = self.currentFrame().instructions();
+        const op: code.Opcode = @enumFromInt(ins[ip]);
 
         switch (op) {
+            .return_ => {
+                _ = self.popFrame();
+                _ = self.pop();
+
+                try self.push(.null_);
+            },
+            .return_value => {
+                const rv = self.pop();
+
+                _ = self.popFrame();
+                _ = self.pop();
+
+                try self.push(rv);
+            },
+            .call => {
+                const fn_obj = switch (self.stack[self.sp - 1]) {
+                    .compiled_function => |cf| cf,
+                    else => {
+                        std.debug.print("calling non function", .{});
+                        return error.CallingNonFunction;
+                    },
+                };
+
+                const frame = try Frame.init(self.allocator, fn_obj);
+                self.pushFrame(frame);
+            },
             .index => {
                 const index = self.pop();
                 const left = self.pop();
@@ -55,8 +96,8 @@ pub fn run(self: *Self) !void {
                 try self.executeIndexOperation(left, index);
             },
             .hash => {
-                const num_elem: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
-                ip += 2;
+                const num_elem: usize = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
+                self.currentFrame().ip += 2;
 
                 const hash = try self.buildHash(self.sp - num_elem, self.sp);
 
@@ -65,8 +106,8 @@ pub fn run(self: *Self) !void {
                 try self.push(hash);
             },
             .array => {
-                const num_elem: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
-                ip += 2;
+                const num_elem: usize = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
+                self.currentFrame().ip += 2;
 
                 const array = try self.buildArray(self.sp - num_elem, self.sp);
 
@@ -75,34 +116,34 @@ pub fn run(self: *Self) !void {
                 try self.push(array);
             },
             .get_global => {
-                const global_index = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
-                ip += 2;
+                const global_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
+                self.currentFrame().ip += 2;
 
                 try self.push(self.globals[global_index]);
             },
             .set_global => {
-                const global_index = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
-                ip += 2;
+                const global_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
+                self.currentFrame().ip += 2;
 
                 self.globals[global_index] = self.pop();
             },
             .constant => {
-                const const_index = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
-                ip += 2;
+                const const_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
+                self.currentFrame().ip += 2;
 
                 try self.push(self.constants[const_index]);
             },
             .jump => {
-                const pos: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
-                ip = pos - 1;
+                const pos: i64 = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
+                self.currentFrame().ip = pos - 1;
             },
             .jump_not_truthy => {
-                const pos: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
-                ip += 2;
+                const pos: i64 = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
+                self.currentFrame().ip += 2;
 
                 const condition = self.pop();
 
-                if (!isTruthy(condition)) ip = pos - 1;
+                if (!isTruthy(condition)) self.currentFrame().ip = pos - 1;
             },
             .add, .sub, .mul, .div => try self.executeBinaryOperation(op),
             .true_ => try self.push(.{ .boolean = .{ .value = true } }),
@@ -309,6 +350,21 @@ fn buildHash(self: *Self, start: usize, end: usize) !object.Object {
     return .{ .hash = .{ .pairs = hashedPairs } };
 }
 
+fn currentFrame(self: *const Self) *Frame {
+    return self.frames[self.frames_index - 1];
+}
+
+fn pushFrame(self: *Self, f: *Frame) void {
+    self.frames[self.frames_index] = f;
+    self.frames_index += 1;
+}
+
+fn popFrame(self: *Self) *Frame {
+    self.frames_index -= 1;
+
+    return self.frames[self.frames_index];
+}
+
 fn isTruthy(obj: object.Object) bool {
     return switch (obj) {
         .boolean => |b| b.value,
@@ -492,6 +548,108 @@ test "index" {
         .{ .input = "{1: 1, 2: 2}[2]", .expected = .{ .integer = 2 } },
         .{ .input = "{1: 1}[0]", .expected = .null_ },
         .{ .input = "{}[0]", .expected = .null_ },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "function call without arguments" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input =
+            \\let foo = fn() { 5 + 10; };
+            \\foo();
+            ,
+            .expected = .{ .integer = 15 },
+        },
+        .{
+            .input =
+            \\let one = fn() { 1; };
+            \\let two = fn() { 2; };
+            \\one() + two();
+            ,
+            .expected = .{ .integer = 3 },
+        },
+        .{
+            .input =
+            \\let a = fn() { 1 };
+            \\let b = fn() { a() + 1 };
+            \\let c = fn() { b() + 1 };
+            \\c();
+            ,
+            .expected = .{ .integer = 3 },
+        },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "function call with return" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input =
+            \\let foo = fn() { return 99; 100; };
+            \\foo();
+            ,
+            .expected = .{ .integer = 99 },
+        },
+        .{
+            .input =
+            \\let foo = fn() { return 99; return 100; };
+            \\foo();
+            ,
+            .expected = .{ .integer = 99 },
+        },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "function call without return" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input =
+            \\let foo = fn() { };
+            \\foo();
+            ,
+            .expected = .null_,
+        },
+        .{
+            .input =
+            \\let foo = fn() { };
+            \\let fooToo = fn() { foo() };
+            \\foo();
+            \\fooToo();
+            ,
+            .expected = .null_,
+        },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "first class functions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input =
+            \\let foo = fn() { 1; };
+            \\let bar = fn() { foo; };
+            \\bar()();
+            ,
+            .expected = .{ .integer = 1 },
+        },
     };
 
     try runVMTests(arena.allocator(), &tests);

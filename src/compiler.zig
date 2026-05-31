@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const ByteCode = @import("helpers.zig").ByteCode;
 const EmittedInstruction = @import("helpers.zig").EmittedInstruction;
+const CompilationScope = @import("helpers.zig").CompilationScope;
 
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
@@ -14,21 +15,34 @@ const object = @import("object.zig");
 
 const Self = @This();
 
-instructions: std.ArrayList(u8),
 constants: std.ArrayList(object.Object),
+instructions: std.ArrayList(u8),
 last_instruction: ?EmittedInstruction,
 previous_instruction: ?EmittedInstruction,
+scope_index: usize,
+scopes: std.ArrayList(CompilationScope),
 symbol_table: *SymbolTable,
 
 pub fn init(allocator: std.mem.Allocator) !Self {
     const st = try allocator.create(SymbolTable);
     st.* = SymbolTable.init(allocator);
 
+    const mainScope: CompilationScope = .{
+        .instructions = std.ArrayList(u8).empty,
+        .last_instruction = null,
+        .previous_instruction = null,
+    };
+
+    var scopes = std.ArrayList(CompilationScope).empty;
+    try scopes.append(allocator, mainScope);
+
     return Self{
         .constants = std.ArrayList(object.Object).empty,
         .instructions = std.ArrayList(u8).empty,
         .last_instruction = null,
         .previous_instruction = null,
+        .scope_index = 0,
+        .scopes = scopes,
         .symbol_table = st,
     };
 }
@@ -47,6 +61,30 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
         .program => |p| for (p.statements.items) |stmt| try self.compile(allocator, .{ .statement = stmt }),
         .expression => |e| {
             switch (e) {
+                .call_expression => |ce| {
+                    try self.compile(allocator, .{ .expression = ce.function.?.* });
+
+                    _ = try self.emit(allocator, .call, &.{});
+                },
+                .function_literal => |fl| {
+                    try self.enterScope(allocator);
+
+                    try self.compile(allocator, .{ .statement = .{ .block_statement = fl.body.? } });
+
+                    if (self.lastInstructionIs(.pop)) try self.replaceLastPopWithReturn(allocator);
+
+                    if (!self.lastInstructionIs(.return_value)) {
+                        _ = try self.emit(allocator, .return_, &.{});
+                    }
+
+                    const instructions = self.leaveScope();
+
+                    const compiledFn: object.CompiledFunction = .{ .instructions = instructions };
+
+                    const constant = try self.addConstant(allocator, .{ .compiled_function = compiledFn });
+
+                    _ = try self.emit(allocator, .constant, &.{constant});
+                },
                 .index_expression => |ie| {
                     try self.compile(allocator, .{ .expression = ie.left.?.* });
                     try self.compile(allocator, .{ .expression = ie.index.?.* });
@@ -87,10 +125,10 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
 
                     try self.compile(allocator, .{ .statement = .{ .block_statement = ie.consequence.? } });
 
-                    if (self.lastInstructionIsPop()) self.removeLastPop();
+                    if (self.lastInstructionIs(.pop)) self.removeLastPop();
 
                     const jump_pos = try self.emit(allocator, .jump, &.{9999});
-                    const after_consequence_pos = self.instructions.items.len;
+                    const after_consequence_pos = self.currentInstructions().len;
 
                     try self.changeOperand(allocator, not_truthy_pos, &.{after_consequence_pos});
 
@@ -99,10 +137,10 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                     } else {
                         try self.compile(allocator, .{ .statement = .{ .block_statement = ie.alternative.? } });
 
-                        if (self.lastInstructionIsPop()) self.removeLastPop();
+                        if (self.lastInstructionIs(.pop)) self.removeLastPop();
                     }
 
-                    const after_alternative_pos = self.instructions.items.len;
+                    const after_alternative_pos = self.currentInstructions().len;
                     try self.changeOperand(allocator, jump_pos, &.{after_alternative_pos});
                 },
                 .prefix_expression => |pe| {
@@ -169,10 +207,14 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                         _ = try self.emit(allocator, .false_, &.{});
                     }
                 },
-                else => {},
             }
         },
         .statement => |s| switch (s) {
+            .return_statement => |rs| {
+                try self.compile(allocator, .{ .expression = rs.return_value.?.* });
+
+                _ = try self.emit(allocator, .return_value, &.{});
+            },
             .let_statement => |ls| {
                 try self.compile(allocator, .{ .expression = ls.value.?.* });
 
@@ -189,7 +231,6 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
 
                 _ = try self.emit(allocator, .pop, &.{});
             },
-            else => {},
         },
     }
 }
@@ -197,8 +238,29 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
 pub fn bytecode(self: Self) ByteCode {
     return .{
         .constants = self.constants.items,
-        .instructions = self.instructions.items,
+        .instructions = self.currentInstructions(),
     };
+}
+
+fn enterScope(self: *Self, allocator: std.mem.Allocator) !void {
+    const scope: CompilationScope = .{
+        .instructions = std.ArrayList(u8).empty,
+        .last_instruction = null,
+        .previous_instruction = null,
+    };
+
+    try self.scopes.append(allocator, scope);
+
+    self.scope_index += 1;
+}
+
+fn leaveScope(self: *Self) code.Instructions {
+    const instructions = self.currentInstructions();
+
+    self.scopes.shrinkRetainingCapacity(self.scopes.items.len - 1);
+    self.scope_index -= 1;
+
+    return instructions;
 }
 
 fn addConstant(self: *Self, allocator: std.mem.Allocator, obj: object.Object) !usize {
@@ -216,40 +278,59 @@ fn emit(self: *Self, allocator: std.mem.Allocator, op: code.Opcode, operands: []
     return pos;
 }
 
+fn currentInstructions(self: *const Self) code.Instructions {
+    return self.scopes.items[self.scope_index].instructions.items;
+}
+
 fn addInstruction(self: *Self, allocator: std.mem.Allocator, ins: []const u8) !usize {
-    const pos_new_instruction = self.instructions.items.len;
-    try self.instructions.appendSlice(allocator, ins);
+    const pos_new_instruction = self.currentInstructions().len;
+
+    try self.scopes.items[self.scope_index].instructions.appendSlice(allocator, ins);
 
     return pos_new_instruction;
 }
 
 fn setLastInstruction(self: *Self, op: code.Opcode, pos: usize) void {
-    const previous = self.last_instruction;
+    const previous = self.scopes.items[self.scope_index].last_instruction;
     const last: EmittedInstruction = .{ .opcode = op, .position = pos };
 
-    self.previous_instruction = previous;
-    self.last_instruction = last;
+    self.scopes.items[self.scope_index].previous_instruction = previous;
+    self.scopes.items[self.scope_index].last_instruction = last;
 }
 
-fn lastInstructionIsPop(self: *const Self) bool {
-    return self.last_instruction.?.opcode == .pop;
+fn lastInstructionIs(self: *const Self, op: code.Opcode) bool {
+    if (self.currentInstructions().len == 0) return false;
+
+    return self.scopes.items[self.scope_index].last_instruction.?.opcode == op;
 }
 
 fn removeLastPop(self: *Self) void {
-    self.instructions.shrinkRetainingCapacity(self.last_instruction.?.position);
+    const scope = &self.scopes.items[self.scope_index];
 
-    self.last_instruction = self.previous_instruction;
+    scope.instructions.shrinkRetainingCapacity(scope.last_instruction.?.position);
+    scope.last_instruction = scope.previous_instruction;
 }
 
 fn replaceLastInstruction(self: *Self, pos: usize, newInstruction: []const u8) void {
+    var ins = self.scopes.items[self.scope_index].instructions.items;
+
     var i: usize = 0;
     while (i < newInstruction.len) : (i += 1) {
-        self.instructions.items[pos + i] = newInstruction[i];
+        ins[pos + i] = newInstruction[i];
     }
 }
 
+fn replaceLastPopWithReturn(self: *Self, allocator: std.mem.Allocator) !void {
+    const last_pos = self.scopes.items[self.scope_index].last_instruction.?.position;
+
+    const ins = try code.make(allocator, .return_value, &.{});
+    self.replaceLastInstruction(last_pos, ins);
+
+    self.scopes.items[self.scope_index].last_instruction.?.opcode = .return_value;
+}
+
 fn changeOperand(self: *Self, allocator: std.mem.Allocator, op_pos: usize, operand: []const usize) !void {
-    const op: code.Opcode = @enumFromInt(self.instructions.items[op_pos]);
+    const op: code.Opcode = @enumFromInt(self.scopes.items[self.scope_index].instructions.items[op_pos]);
 
     const new_instruction = try code.make(allocator, op, operand);
 
@@ -267,6 +348,7 @@ fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
 const ExpectedConstants = union(enum) {
     integer: i64,
     string: []const u8,
+    instructions: []const code.Instructions,
 };
 
 const CompilerTestCase = struct {
@@ -737,16 +819,168 @@ test "index" {
     try runCompilerTests(arena.allocator(), &tests);
 }
 
+test "functions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "fn() { return 5 + 10 }",
+            .expected_constants = &.{
+                .{ .integer = 5 },
+                .{ .integer = 10 },
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .constant, &.{0}),
+                    try code.make(arena.allocator(), .constant, &.{1}),
+                    try code.make(arena.allocator(), .add, &.{}),
+                    try code.make(arena.allocator(), .return_value, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "fn() { 5 + 10 }",
+            .expected_constants = &.{
+                .{ .integer = 5 },
+                .{ .integer = 10 },
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .constant, &.{0}),
+                    try code.make(arena.allocator(), .constant, &.{1}),
+                    try code.make(arena.allocator(), .add, &.{}),
+                    try code.make(arena.allocator(), .return_value, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "fn() { 1; 2 }",
+            .expected_constants = &.{
+                .{ .integer = 1 },
+                .{ .integer = 2 },
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .constant, &.{0}),
+                    try code.make(arena.allocator(), .pop, &.{}),
+                    try code.make(arena.allocator(), .constant, &.{1}),
+                    try code.make(arena.allocator(), .return_value, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "fn() { }",
+            .expected_constants = &.{
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .return_, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
+test "function calls" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "fn() { 24 }()",
+            .expected_constants = &.{
+                .{ .integer = 24 },
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .constant, &.{0}),
+                    try code.make(arena.allocator(), .return_value, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .call, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input =
+            \\let noArg = fn() { 24 };
+            \\noArg();
+            ,
+            .expected_constants = &.{
+                .{ .integer = 24 },
+                .{ .instructions = &.{
+                    try code.make(arena.allocator(), .constant, &.{0}),
+                    try code.make(arena.allocator(), .return_value, &.{}),
+                } },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .call, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
+test "compiler scopes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try init(arena.allocator());
+    try testing.expectEqual(@as(usize, 0), compiler.scope_index);
+
+    _ = try compiler.emit(arena.allocator(), .mul, &.{});
+
+    try compiler.enterScope(arena.allocator());
+    try testing.expectEqual(@as(usize, 1), compiler.scope_index);
+
+    _ = try compiler.emit(arena.allocator(), .sub, &.{});
+
+    try testing.expectEqual(@as(usize, 1), compiler.scopes.items[compiler.scope_index].instructions.items.len);
+
+    const last = compiler.scopes.items[compiler.scope_index].last_instruction;
+    try testing.expectEqual(code.Opcode.sub, last.?.opcode);
+
+    _ = compiler.leaveScope();
+    try testing.expectEqual(@as(usize, 0), compiler.scope_index);
+
+    _ = try compiler.emit(arena.allocator(), .add, &.{});
+    try testing.expectEqual(@as(usize, 2), compiler.scopes.items[compiler.scope_index].instructions.items.len);
+
+    const add = compiler.scopes.items[compiler.scope_index].last_instruction;
+    try testing.expectEqual(code.Opcode.add, add.?.opcode);
+
+    const previous = compiler.scopes.items[compiler.scope_index].previous_instruction;
+    try testing.expectEqual(code.Opcode.mul, previous.?.opcode);
+}
+
 fn runCompilerTests(allocator: std.mem.Allocator, tests: []const CompilerTestCase) !void {
-    for (tests) |t| {
+    for (tests, 0..) |t, i| {
         const program = try parse(allocator, t.input);
 
         var compiler = try init(allocator);
         try compiler.compile(allocator, .{ .program = program });
         const bc = compiler.bytecode();
 
+        errdefer std.debug.print("Test {d} failed: {s}\n", .{ i, tests[i].input });
+
         try testInstructions(allocator, t.expected_instructions, bc.instructions);
-        try testConstants(t.expected_constants, bc.constants);
+        try testConstants(allocator, t.expected_constants, bc.constants);
     }
 }
 
@@ -768,13 +1002,24 @@ fn concatInstructions(allocator: std.mem.Allocator, slices: []const code.Instruc
     return out.items;
 }
 
-fn testConstants(expected: []const ExpectedConstants, actual: []object.Object) !void {
+fn testConstants(allocator: std.mem.Allocator, expected: []const ExpectedConstants, actual: []object.Object) !void {
     try testing.expectEqual(expected.len, actual.len);
 
     for (expected, 0..) |constant, i| {
         switch (constant) {
             .integer => |v| try testIntegerObject(v, actual[i]),
             .string => |v| try testStringObject(v, actual[i]),
+            .instructions => |v| {
+                const fn_obj = switch (actual[i]) {
+                    .compiled_function => |cf| cf,
+                    else => {
+                        std.debug.print("constant is not CompiledFunction. got={s}\n", .{@tagName(actual[i])});
+                        return error.WrongObjectType;
+                    },
+                };
+
+                try testInstructions(allocator, v, fn_obj.instructions);
+            },
         }
     }
 }
