@@ -18,10 +18,13 @@ pub fn main(init: std.process.Init) !void {
 
 test {
     _ = @import("ast.zig");
+    _ = @import("code.zig");
+    _ = @import("compiler.zig");
     _ = @import("evaluator.zig");
     _ = @import("lexer.zig");
     _ = @import("object.zig");
     _ = @import("parser.zig");
     _ = @import("repl.zig");
     _ = @import("token.zig");
+    _ = @import("vm.zig");
 }

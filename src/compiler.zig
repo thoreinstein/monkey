@@ -47,6 +47,12 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
         .program => |p| for (p.statements.items) |stmt| try self.compile(allocator, .{ .statement = stmt }),
         .expression => |e| {
             switch (e) {
+                .index_expression => |ie| {
+                    try self.compile(allocator, .{ .expression = ie.left.?.* });
+                    try self.compile(allocator, .{ .expression = ie.index.?.* });
+
+                    _ = try self.emit(allocator, .index, &.{});
+                },
                 .hash_literal => |hl| {
                     for (hl.pairs.items) |pair| {
                         try self.compile(allocator, .{ .expression = pair.key.* });
@@ -673,6 +679,56 @@ test "hashes" {
                 try code.make(arena.allocator(), .constant, &.{5}),
                 try code.make(arena.allocator(), .mul, &.{}),
                 try code.make(arena.allocator(), .hash, &.{4}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
+test "index" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "[1, 2, 3][1 + 1]",
+            .expected_constants = &.{
+                .{ .integer = 1 },
+                .{ .integer = 2 },
+                .{ .integer = 3 },
+                .{ .integer = 1 },
+                .{ .integer = 1 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .array, &.{3}),
+                try code.make(arena.allocator(), .constant, &.{3}),
+                try code.make(arena.allocator(), .constant, &.{4}),
+                try code.make(arena.allocator(), .add, &.{}),
+                try code.make(arena.allocator(), .index, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "{1: 2}[2 - 1]",
+            .expected_constants = &.{
+                .{ .integer = 1 },
+                .{ .integer = 2 },
+                .{ .integer = 2 },
+                .{ .integer = 1 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .hash, &.{2}),
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .constant, &.{3}),
+                try code.make(arena.allocator(), .sub, &.{}),
+                try code.make(arena.allocator(), .index, &.{}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },

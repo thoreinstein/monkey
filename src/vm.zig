@@ -48,6 +48,12 @@ pub fn run(self: *Self) !void {
         const op: code.Opcode = @enumFromInt(self.instructions[ip]);
 
         switch (op) {
+            .index => {
+                const index = self.pop();
+                const left = self.pop();
+
+                try self.executeIndexOperation(left, index);
+            },
             .hash => {
                 const num_elem: usize = std.mem.readInt(u16, self.instructions[ip + 1 ..][0..2], .big);
                 ip += 2;
@@ -238,6 +244,40 @@ fn executeMinusOperator(self: *Self) !void {
     }
 
     return error.UnsupportedObjectForNegation;
+}
+
+fn executeIndexOperation(self: *Self, left: object.Object, index: object.Object) !void {
+    if (std.mem.eql(u8, object.ARRAY_OBJ, left.kind()) and std.mem.eql(u8, object.INTEGER_OBJ, index.kind())) {
+        return self.executeArrayIndex(left, index);
+    }
+
+    if (std.mem.eql(u8, object.HASH_OBJ, left.kind())) {
+        return self.executeHashIndex(left, index);
+    }
+
+    return error.IndexOperatorNotSupported;
+}
+
+fn executeArrayIndex(self: *Self, array: object.Object, index: object.Object) !void {
+    const array_obj = array.array;
+    const i = index.integer.value;
+    const max: i64 = @intCast(array_obj.elements.items.len);
+
+    if (i < 0 or i >= max) return try self.push(.{ .null_ = .{} });
+
+    try self.push(array_obj.elements.items[@intCast(i)]);
+}
+
+fn executeHashIndex(self: *Self, hash: object.Object, index: object.Object) !void {
+    const hash_obj = hash.hash;
+
+    const key = index.hashKey() orelse return error.ObjectNotHashable;
+
+    const pair = hash_obj.pairs.get(key) orelse {
+        return try self.push(.{ .null_ = .{} });
+    };
+
+    try self.push(pair.value);
 }
 
 fn buildArray(self: *Self, start: usize, end: usize) !object.Object {
@@ -437,6 +477,26 @@ test "hashes" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "index" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "[1, 2, 3][1]", .expected = .{ .integer = 2 } },
+        .{ .input = "[1, 2, 3][0 + 2]", .expected = .{ .integer = 3 } },
+        .{ .input = "[[1, 1, 1]][0][0]", .expected = .{ .integer = 1 } },
+        .{ .input = "[][0]", .expected = .null_ },
+        .{ .input = "[1, 2, 3][99]", .expected = .null_ },
+        .{ .input = "[1][-1]", .expected = .null_ },
+        .{ .input = "{1: 1, 2: 2}[1]", .expected = .{ .integer = 1 } },
+        .{ .input = "{1: 1, 2: 2}[2]", .expected = .{ .integer = 2 } },
+        .{ .input = "{1: 1}[0]", .expected = .null_ },
+        .{ .input = "{}[0]", .expected = .null_ },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
@@ -505,7 +565,7 @@ fn testIntegerObject(expected: i64, actual: object.Object) !void {
     const int_obj = switch (actual) {
         .integer => |i| i,
         else => {
-            std.debug.print("object is not Integer, got={s}", .{@tagName(actual)});
+            std.debug.print("object is not Integer, got={s}\n", .{@tagName(actual)});
             return error.WrongObjectType;
         },
     };
