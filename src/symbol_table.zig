@@ -4,6 +4,7 @@ const testing = std.testing;
 pub const SymbolScope = enum {
     global,
     local,
+    builtin,
 };
 
 pub const Symbol = struct {
@@ -59,6 +60,16 @@ pub fn resolve(self: *const Self, name: []const u8) ?Symbol {
 
         return null;
     };
+}
+
+pub fn defineBuiltin(self: *Self, index: usize, name: []const u8) !Symbol {
+    const owned = try self.store.allocator.dupe(u8, name);
+
+    const symbol = Symbol{ .name = owned, .index = index, .scope = .builtin };
+
+    try self.store.put(owned, symbol);
+
+    return symbol;
 }
 
 test "define" {
@@ -201,6 +212,38 @@ test "resolve nested local" {
     for (tests) |t| {
         for (t.expected_symbols) |sym| {
             const result = t.table.resolve(sym.name) orelse return error.SymbolNotInScope;
+
+            try testing.expectEqualStrings(sym.name, result.name);
+            try testing.expectEqual(sym.scope, result.scope);
+            try testing.expectEqual(sym.index, result.index);
+        }
+    }
+}
+
+test "define and resolve builtins" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const global = try init(arena.allocator());
+    const first = try initEnclosed(arena.allocator(), global);
+    const second = try initEnclosed(arena.allocator(), first);
+
+    const symbol_tables: []const *Self = &.{ global, first, second };
+
+    const expected: []const Symbol = &.{
+        .{ .name = "a", .scope = .builtin, .index = 0 },
+        .{ .name = "b", .scope = .builtin, .index = 1 },
+        .{ .name = "c", .scope = .builtin, .index = 2 },
+        .{ .name = "d", .scope = .builtin, .index = 3 },
+    };
+
+    for (expected, 0..) |v, i| {
+        _ = try global.defineBuiltin(i, v.name);
+    }
+
+    for (symbol_tables) |table| {
+        for (expected) |sym| {
+            const result = table.resolve(sym.name) orelse return error.SymbolNotInScope;
 
             try testing.expectEqualStrings(sym.name, result.name);
             try testing.expectEqual(sym.scope, result.scope);

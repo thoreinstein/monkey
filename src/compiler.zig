@@ -10,6 +10,7 @@ const Parser = @import("parser.zig");
 const SymbolTable = @import("symbol_table.zig");
 
 const ast = @import("ast.zig");
+const builtins = @import("builtins.zig").builtins;
 const code = @import("code.zig");
 const object = @import("object.zig");
 
@@ -33,6 +34,12 @@ pub fn init(allocator: std.mem.Allocator) !Self {
     var scopes = std.ArrayList(CompilationScope).empty;
     try scopes.append(allocator, mainScope);
 
+    var symbol_table = try SymbolTable.init(allocator);
+
+    for (builtins, 0..) |b, i| {
+        _ = try symbol_table.defineBuiltin(i, b.name);
+    }
+
     return Self{
         .constants = std.ArrayList(object.Object).empty,
         .instructions = std.ArrayList(u8).empty,
@@ -40,7 +47,7 @@ pub fn init(allocator: std.mem.Allocator) !Self {
         .previous_instruction = null,
         .scope_index = 0,
         .scopes = scopes,
-        .symbol_table = try SymbolTable.init(allocator),
+        .symbol_table = symbol_table,
     };
 }
 
@@ -126,11 +133,7 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                 .identifier_expression => |ie| {
                     const symbol = self.symbol_table.resolve(ie.value) orelse return error.SymbolTableLookupFailed;
 
-                    if (symbol.scope == .global) {
-                        _ = try self.emit(allocator, .get_global, &.{symbol.index});
-                    } else {
-                        _ = try self.emit(allocator, .get_local, &.{symbol.index});
-                    }
+                    try self.loadSymbols(allocator, symbol);
                 },
                 .if_expression => |ie| {
                     try self.compile(allocator, .{ .expression = ie.condition.?.* });
@@ -357,6 +360,14 @@ fn changeOperand(self: *Self, allocator: std.mem.Allocator, op_pos: usize, opera
     const new_instruction = try code.make(allocator, op, operand);
 
     self.replaceLastInstruction(op_pos, new_instruction);
+}
+
+fn loadSymbols(self: *Self, allocator: std.mem.Allocator, s: SymbolTable.Symbol) !void {
+    switch (s.scope) {
+        .global => _ = try self.emit(allocator, .get_global, &.{s.index}),
+        .local => _ = try self.emit(allocator, .get_local, &.{s.index}),
+        .builtin => _ = try self.emit(allocator, .get_builtin, &.{s.index}),
+    }
 }
 
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
@@ -1053,6 +1064,53 @@ test "function calls" {
                 try code.make(arena.allocator(), .constant, &.{2}),
                 try code.make(arena.allocator(), .constant, &.{3}),
                 try code.make(arena.allocator(), .call, &.{3}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
+test "builtins" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input =
+            \\len([]);
+            \\push([], 1);
+            ,
+            .expected_constants = &.{
+                .{ .integer = 1 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .get_builtin, &.{0}),
+                try code.make(arena.allocator(), .array, &.{0}),
+                try code.make(arena.allocator(), .call, &.{1}),
+                try code.make(arena.allocator(), .pop, &.{}),
+                try code.make(arena.allocator(), .get_builtin, &.{5}),
+                try code.make(arena.allocator(), .array, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .call, &.{2}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "fn() { len([]) }",
+            .expected_constants = &.{
+                .{
+                    .instructions = &.{
+                        try code.make(arena.allocator(), .get_builtin, &.{0}),
+                        try code.make(arena.allocator(), .array, &.{0}),
+                        try code.make(arena.allocator(), .call, &.{1}),
+                        try code.make(arena.allocator(), .return_value, &.{}),
+                    },
+                },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },

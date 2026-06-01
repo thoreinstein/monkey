@@ -8,6 +8,7 @@ const Parser = @import("parser.zig");
 const SymbolTable = @import("symbol_table.zig");
 const VM = @import("vm.zig");
 
+const builtins = @import("builtins.zig").builtins;
 const object = @import("object.zig");
 
 const PROMPT = ">> ";
@@ -40,6 +41,10 @@ pub fn start(allocator: std.mem.Allocator, in: *io.Reader, out: *io.Writer) !?vo
             for (parser.errors().items) |msg| try out.print("\t{s}\n", .{msg});
             try out.flush();
             continue;
+        }
+
+        for (builtins, 0..) |b, i| {
+            _ = try symbol_table.defineBuiltin(i, b.name);
         }
 
         var compiler = try Compiler.initWithState(allocator, symbol_table, constants);

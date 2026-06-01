@@ -8,6 +8,7 @@ const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
 
 const ast = @import("ast.zig");
+const builtins = @import("builtins.zig").builtins;
 const code = @import("code.zig");
 const object = @import("object.zig");
 
@@ -81,7 +82,7 @@ pub fn run(self: *Self) !void {
                 const num_args = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
                 self.currentFrame().ip += 1;
 
-                try self.callFunction(num_args);
+                try self.executeCall(num_args);
             },
             .index => {
                 const index = self.pop();
@@ -108,6 +109,14 @@ pub fn run(self: *Self) !void {
                 self.sp = self.sp - num_elem;
 
                 try self.push(array);
+            },
+            .get_builtin => {
+                const builtin_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
+                self.currentFrame().ip += 1;
+
+                const definition = builtins[builtin_index];
+
+                try self.push(.{ .builtin = definition.builtin });
             },
             .get_global => {
                 const global_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
@@ -331,20 +340,32 @@ fn executeHashIndex(self: *Self, hash: object.Object, index: object.Object) !voi
     try self.push(pair.value);
 }
 
-fn callFunction(self: *Self, num_args: u8) !void {
-    const fn_obj = switch (self.stack[self.sp - 1 - num_args]) {
-        .compiled_function => |cf| cf,
-        else => {
-            std.debug.print("calling non function", .{});
-            return error.CallingNonFunction;
-        },
-    };
+fn executeCall(self: *Self, num_args: usize) !void {
+    const callee = self.stack[self.sp - 1 - num_args];
 
+    switch (callee) {
+        .compiled_function => |cf| try self.callFunction(cf, num_args),
+        .builtin => |b| try self.callBuiltin(b, num_args),
+        else => return error.CallingNonFunction,
+    }
+}
+
+fn callFunction(self: *Self, fn_obj: object.CompiledFunction, num_args: usize) !void {
     if (num_args != fn_obj.num_parameters) return error.WrongNumberOfArguments;
 
     const frame = try Frame.init(self.allocator, fn_obj, self.sp - num_args);
     self.pushFrame(frame);
     self.sp = frame.base_pointer + fn_obj.num_locals;
+}
+
+fn callBuiltin(self: *Self, builtin: object.Builtin, num_args: usize) !void {
+    const args = self.stack[self.sp - num_args .. self.sp];
+
+    if (try builtin.func(self.allocator, args)) |result| {
+        try self.push(result);
+    } else {
+        try self.push(.{ .null_ = .{} });
+    }
 }
 
 fn buildArray(self: *Self, start: usize, end: usize) !object.Object {
@@ -406,6 +427,7 @@ const Expected = union(enum) {
     string: []const u8,
     array: []const i64,
     hash: []const struct { key: object.HashKey, value: i64 },
+    error_: []const u8,
 };
 
 const VMTestCase = struct {
@@ -848,6 +870,33 @@ test "function calls with wrong arguments" {
     }
 }
 
+test "builtin functions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "len(\"\")", .expected = .{ .integer = 0 } },
+        .{ .input = "len(\"four\")", .expected = .{ .integer = 4 } },
+        .{ .input = "len(\"hello world\")", .expected = .{ .integer = 11 } },
+        .{ .input = "len(1)", .expected = .{ .error_ = "argument to `len` not supported, got=INTEGER" } },
+        .{ .input = "len(\"one\", \"two\")", .expected = .{ .error_ = "wrong number of arguments. got=2, want=1" } },
+        .{ .input = "len([1, 2, 3])", .expected = .{ .integer = 3 } },
+        .{ .input = "len([])", .expected = .{ .integer = 0 } },
+        .{ .input = "puts(\"hello, world!\")", .expected = .null_ },
+        .{ .input = "first([1, 2, 3])", .expected = .{ .integer = 1 } },
+        .{ .input = "first([])", .expected = .null_ },
+        .{ .input = "first(1)", .expected = .{ .error_ = "argument to `first` must be ARRAY, got=INTEGER" } },
+        .{ .input = "last([1, 2, 3])", .expected = .{ .integer = 3 } },
+        .{ .input = "last([])", .expected = .null_ },
+        .{ .input = "last(1)", .expected = .{ .error_ = "argument to `last` must be ARRAY, got=INTEGER" } },
+        .{ .input = "rest([1, 2, 3])", .expected = .{ .array = &.{ 2, 3 } } },
+        .{ .input = "rest([])", .expected = .null_ },
+        .{ .input = "push([], 1)", .expected = .{ .array = &.{1} } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
@@ -908,6 +957,17 @@ fn testExpectedObject(expected: Expected, actual: object.Object) !void {
 
                 try testIntegerObject(pair.value, got.value);
             }
+        },
+        .error_ => |msg| {
+            const err_obj = switch (actual) {
+                .error_ => |e| e,
+                else => {
+                    std.debug.print("object is not Error, got={s}", .{@tagName(actual)});
+                    return error.WrongObjectType;
+                },
+            };
+
+            try testing.expectEqualStrings(msg, err_obj.message);
         },
     }
 }

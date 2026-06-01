@@ -2,14 +2,27 @@ const std = @import("std");
 
 const object = @import("object.zig");
 
-pub const builtins = std.StaticStringMap(object.Builtin).initComptime(.{
-    .{ "len", object.Builtin{ .func = lenBuiltin } },
-    .{ "first", object.Builtin{ .func = firstBuiltin } },
-    .{ "last", object.Builtin{ .func = lastBuiltin } },
-    .{ "rest", object.Builtin{ .func = restBuiltin } },
-    .{ "push", object.Builtin{ .func = pushBuiltin } },
-    .{ "puts", object.Builtin{ .func = putsBuiltin } },
-});
+pub const Builtin = struct {
+    name: []const u8,
+    builtin: object.Builtin,
+};
+
+pub const builtins = [_]Builtin{
+    .{ .name = "len", .builtin = .{ .func = lenBuiltin } },
+    .{ .name = "puts", .builtin = .{ .func = putsBuiltin } },
+    .{ .name = "first", .builtin = .{ .func = firstBuiltin } },
+    .{ .name = "last", .builtin = .{ .func = lastBuiltin } },
+    .{ .name = "rest", .builtin = .{ .func = restBuiltin } },
+    .{ .name = "push", .builtin = .{ .func = pushBuiltin } },
+};
+
+pub fn getByName(name: []const u8) ?object.Builtin {
+    for (builtins) |b| {
+        if (std.mem.eql(u8, name, b.name)) return b.builtin;
+    }
+
+    return null;
+}
 
 fn lenBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?object.Object {
     if (args.len != 1) {
@@ -44,8 +57,10 @@ fn firstBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?obj
     }
 
     switch (args[0]) {
-        .array => |a| return a.elements.items[0],
-
+        .array => |a| {
+            if (a.elements.items.len > 0) return a.elements.items[0];
+            return null;
+        },
         else => {
             const msg = try std.fmt.allocPrint(allocator, "argument to `first` must be ARRAY, got={s}", .{args[0].kind()});
             return .{ .error_ = .{ .message = msg } };
@@ -62,8 +77,10 @@ fn lastBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?obje
     }
 
     switch (args[0]) {
-        .array => |a| return a.elements.getLast(),
-
+        .array => |a| {
+            if (a.elements.items.len > 0) return a.elements.getLast();
+            return null;
+        },
         else => {
             const msg = try std.fmt.allocPrint(allocator, "argument to `last` must be ARRAY, got={s}", .{args[0].kind()});
             return .{ .error_ = .{ .message = msg } };
@@ -81,12 +98,16 @@ fn restBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?obje
 
     switch (args[0]) {
         .array => |a| {
-            const tail = a.elements.items[1..];
+            if (a.elements.items.len > 0) {
+                const tail = a.elements.items[1..];
 
-            var new_list = std.ArrayList(object.Object).empty;
-            try new_list.appendSlice(allocator, tail);
+                var new_list = std.ArrayList(object.Object).empty;
+                try new_list.appendSlice(allocator, tail);
 
-            return .{ .array = .{ .elements = new_list } };
+                return .{ .array = .{ .elements = new_list } };
+            }
+
+            return null;
         },
         else => {
             const msg = try std.fmt.allocPrint(allocator, "argument to `rest` must be ARRAY, got={s}", .{args[0].kind()});

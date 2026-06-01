@@ -6,7 +6,7 @@ const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
 
 const ast = @import("ast.zig");
-const builtins = @import("builtins.zig").builtins;
+const builtins = @import("builtins.zig");
 const object = @import("object.zig");
 
 pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) error{OutOfMemory}!?object.Object {
@@ -190,7 +190,7 @@ fn evalInfixExpression(allocator: std.mem.Allocator, operator: []const u8, left:
 fn evalIdentifier(allocator: std.mem.Allocator, node: ast.Identifier, env: *Environment) !object.Object {
     if (env.get(node.value)) |val| return val;
 
-    if (builtins.get(node.value)) |b| return .{ .builtin = b };
+    if (builtins.getByName(node.value)) |b| return .{ .builtin = b };
 
     const msg = try std.fmt.allocPrint(allocator, "identifier not found: {s}", .{node.value});
     return .{ .error_ = .{ .message = msg } };
