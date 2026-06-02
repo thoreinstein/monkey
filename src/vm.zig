@@ -31,7 +31,9 @@ pub fn init(allocator: std.mem.Allocator, bytecode: ByteCode) !Self {
         .instructions = bytecode.instructions,
     };
 
-    const main_frame = try Frame.init(allocator, main_fn, 0);
+    const main_closure: object.Closure = .{ .func = main_fn };
+
+    const main_frame = try Frame.init(allocator, main_closure, 0);
 
     const frames = try allocator.alloc(*Frame, max_frames);
     frames[0] = main_frame;
@@ -64,6 +66,14 @@ pub fn run(self: *Self) !void {
         const op: code.Opcode = @enumFromInt(ins[ip]);
 
         switch (op) {
+            .closure => {
+                const index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
+                _ = std.mem.readInt(u8, ins[ip + 3 ..][0..1], .big);
+
+                self.currentFrame().ip += 3;
+
+                try self.pushClosure(index);
+            },
             .return_value => {
                 const rv = self.pop();
 
@@ -344,6 +354,7 @@ fn executeCall(self: *Self, num_args: usize) !void {
     const callee = self.stack[self.sp - 1 - num_args];
 
     switch (callee) {
+        .closure => |c| try self.callClosure(c, num_args),
         .compiled_function => |cf| try self.callFunction(cf, num_args),
         .builtin => |b| try self.callBuiltin(b, num_args),
         else => return error.CallingNonFunction,
@@ -353,7 +364,9 @@ fn executeCall(self: *Self, num_args: usize) !void {
 fn callFunction(self: *Self, fn_obj: object.CompiledFunction, num_args: usize) !void {
     if (num_args != fn_obj.num_parameters) return error.WrongNumberOfArguments;
 
-    const frame = try Frame.init(self.allocator, fn_obj, self.sp - num_args);
+    const closure: object.Closure = .{ .func = fn_obj };
+
+    const frame = try Frame.init(self.allocator, closure, self.sp - num_args);
     self.pushFrame(frame);
     self.sp = frame.base_pointer + fn_obj.num_locals;
 }
@@ -366,6 +379,15 @@ fn callBuiltin(self: *Self, builtin: object.Builtin, num_args: usize) !void {
     } else {
         try self.push(.{ .null_ = .{} });
     }
+}
+
+fn callClosure(self: *Self, cl: object.Closure, num_args: usize) !void {
+    if (num_args != cl.func.num_parameters) return error.WrongNumberOfArguments;
+
+    const frame = try Frame.init(self.allocator, cl, self.sp - num_args);
+    self.pushFrame(frame);
+
+    self.sp = frame.base_pointer + cl.func.num_locals;
 }
 
 fn buildArray(self: *Self, start: usize, end: usize) !object.Object {
@@ -410,6 +432,19 @@ fn popFrame(self: *Self) *Frame {
     self.frames_index -= 1;
 
     return self.frames[self.frames_index];
+}
+
+fn pushClosure(self: *Self, index: usize) !void {
+    const constant = self.constants[index];
+
+    const fn_obj = switch (constant) {
+        .compiled_function => |cf| cf,
+        else => return error.NotCompiledFunctionObject,
+    };
+
+    const closure: object.Closure = .{ .func = fn_obj };
+
+    try self.push(.{ .closure = closure });
 }
 
 fn isTruthy(obj: object.Object) bool {

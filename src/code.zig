@@ -8,6 +8,7 @@ pub const Opcode = enum(u8) {
     array,
     bang,
     call,
+    closure,
     constant,
     div,
     equal,
@@ -49,6 +50,7 @@ pub fn lookup(op: Opcode) Definition {
         .array => return .{ .name = "OpArray", .operand_widths = &.{2} },
         .bang => return .{ .name = "OpBang", .operand_widths = &.{} },
         .call => return .{ .name = "OpCall", .operand_widths = &.{1} },
+        .closure => return .{ .name = "OpClosure", .operand_widths = &.{ 2, 1 } },
         .constant => return .{ .name = "OpConstant", .operand_widths = &.{2} },
         .div => return .{ .name = "OpDiv", .operand_widths = &.{} },
         .equal => return .{ .name = "OpEqual", .operand_widths = &.{} },
@@ -153,6 +155,7 @@ fn fmtInstructions(allocator: std.mem.Allocator, def: Definition, operands: []co
     switch (operand_count) {
         0 => return def.name,
         1 => return std.fmt.allocPrint(allocator, "{s} {d}", .{ def.name, operands[0] }),
+        2 => return std.fmt.allocPrint(allocator, "{s} {d} {d}", .{ def.name, operands[0], operands[1] }),
         else => {},
     }
 
@@ -168,6 +171,7 @@ test "make" {
         .{ .op = .constant, .operands = &.{65534}, .expected = &.{ @intFromEnum(Opcode.constant), 255, 254 } },
         .{ .op = .add, .operands = &.{}, .expected = &.{@intFromEnum(Opcode.add)} },
         .{ .op = .get_local, .operands = &.{255}, .expected = &.{ @intFromEnum(Opcode.get_local), 255 } },
+        .{ .op = .closure, .operands = &.{ 65534, 255 }, .expected = &.{ @intFromEnum(Opcode.closure), 255, 254, 255 } },
     };
 
     for (tests) |t| {
@@ -191,6 +195,7 @@ test "instructions string" {
         try make(arena.allocator(), .get_local, &.{1}),
         try make(arena.allocator(), .constant, &.{2}),
         try make(arena.allocator(), .constant, &.{65535}),
+        try make(arena.allocator(), .closure, &.{ 65535, 255 }),
     };
 
     const expected =
@@ -198,6 +203,7 @@ test "instructions string" {
         \\0001 OpGetLocal 1
         \\0003 OpConstant 2
         \\0006 OpConstant 65535
+        \\0009 OpClosure 65535 255
         \\
     ;
 
@@ -221,6 +227,7 @@ test "read operands" {
     }{
         .{ .op = .constant, .operands = &.{65535}, .bytes_read = 2 },
         .{ .op = .get_local, .operands = &.{255}, .bytes_read = 1 },
+        .{ .op = .closure, .operands = &.{ 65535, 255 }, .bytes_read = 3 },
     };
 
     for (tests) |t| {

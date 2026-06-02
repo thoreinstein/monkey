@@ -5,15 +5,15 @@ const object = @import("object.zig");
 
 const Self = @This();
 
-func: object.CompiledFunction,
+closure: object.Closure,
 ip: i64,
 base_pointer: usize,
 
-pub fn init(allocator: std.mem.Allocator, func: object.CompiledFunction, base_pointer: usize) !*Self {
+pub fn init(allocator: std.mem.Allocator, cl: object.Closure, base_pointer: usize) !*Self {
     const new = try allocator.create(Self);
 
     new.* = .{
-        .func = func,
+        .closure = cl,
         .ip = -1,
         .base_pointer = base_pointer,
     };
@@ -22,5 +22,5 @@ pub fn init(allocator: std.mem.Allocator, func: object.CompiledFunction, base_po
 }
 
 pub fn instructions(self: *const Self) code.Instructions {
-    return self.func.instructions;
+    return self.closure.func.instructions;
 }

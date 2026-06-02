@@ -17,6 +17,7 @@ pub const BUILTIN_OBJ = "BUILTIN";
 pub const ARRAY_OBJ = "ARRAY";
 pub const HASH_OBJ = "HASH";
 pub const COMPILED_FUNCTION_OBJ = "COMPILED_FUNCTION_OBJ";
+pub const CLOSURE_OBJ = "CLOSURE";
 
 const BuiltinFunction = *const fn (allocator: std.mem.Allocator, args: []Object) error{OutOfMemory}!?Object;
 
@@ -40,6 +41,7 @@ pub const Object = union(enum) {
     null_: Null,
     return_value: ReturnValue,
     string: String,
+    closure: Closure,
 
     pub fn kind(self: Self) []const u8 {
         return switch (self) {
@@ -322,6 +324,23 @@ pub const CompiledFunction = struct {
 
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(allocator, "CompiledFunction{}", .{self});
+    }
+};
+
+pub const Closure = struct {
+    const Self = @This();
+
+    func: CompiledFunction,
+    free: []const *Object = &.{},
+
+    pub fn kind(self: Self) []const u8 {
+        _ = self;
+
+        return CLOSURE_OBJ;
+    }
+
+    pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "Closure[{}]", .{self});
     }
 };
 

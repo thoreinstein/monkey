@@ -98,9 +98,9 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                         .num_parameters = fl.parameters.items.len,
                     };
 
-                    const constant = try self.addConstant(allocator, .{ .compiled_function = compiledFn });
+                    const fn_index = try self.addConstant(allocator, .{ .compiled_function = compiledFn });
 
-                    _ = try self.emit(allocator, .constant, &.{constant});
+                    _ = try self.emit(allocator, .closure, &.{ fn_index, 0 });
                 },
                 .index_expression => |ie| {
                     try self.compile(allocator, .{ .expression = ie.left.?.* });
@@ -870,7 +870,7 @@ test "functions" {
                 } },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .closure, &.{ 2, 0 }),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
@@ -887,7 +887,7 @@ test "functions" {
                 } },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .closure, &.{ 2, 0 }),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
@@ -904,7 +904,7 @@ test "functions" {
                 } },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .closure, &.{ 2, 0 }),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
@@ -916,7 +916,7 @@ test "functions" {
                 } },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .closure, &.{ 0, 0 }),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
@@ -940,7 +940,7 @@ test "function calls" {
                 } },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .closure, &.{ 1, 0 }),
                 try code.make(arena.allocator(), .call, &.{0}),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
@@ -958,7 +958,7 @@ test "function calls" {
                 } },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .closure, &.{ 1, 0 }),
                 try code.make(arena.allocator(), .set_global, &.{0}),
                 try code.make(arena.allocator(), .get_global, &.{0}),
                 try code.make(arena.allocator(), .call, &.{0}),
@@ -979,7 +979,7 @@ test "function calls" {
                 .{ .integer = 24 },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .closure, &.{ 0, 0 }),
                 try code.make(arena.allocator(), .set_global, &.{0}),
                 try code.make(arena.allocator(), .get_global, &.{0}),
                 try code.make(arena.allocator(), .constant, &.{1}),
@@ -1003,7 +1003,7 @@ test "function calls" {
                 .{ .integer = 26 },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .closure, &.{ 0, 0 }),
                 try code.make(arena.allocator(), .set_global, &.{0}),
                 try code.make(arena.allocator(), .get_global, &.{0}),
                 try code.make(arena.allocator(), .constant, &.{1}),
@@ -1028,7 +1028,7 @@ test "function calls" {
                 .{ .integer = 24 },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .closure, &.{ 0, 0 }),
                 try code.make(arena.allocator(), .set_global, &.{0}),
                 try code.make(arena.allocator(), .get_global, &.{0}),
                 try code.make(arena.allocator(), .constant, &.{1}),
@@ -1057,7 +1057,7 @@ test "function calls" {
                 .{ .integer = 26 },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .closure, &.{ 0, 0 }),
                 try code.make(arena.allocator(), .set_global, &.{0}),
                 try code.make(arena.allocator(), .get_global, &.{0}),
                 try code.make(arena.allocator(), .constant, &.{1}),
@@ -1110,7 +1110,7 @@ test "builtins" {
                 },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .closure, &.{ 0, 0 }),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
@@ -1139,7 +1139,7 @@ test "let statement scopes" {
             .expected_instructions = &.{
                 try code.make(arena.allocator(), .constant, &.{0}),
                 try code.make(arena.allocator(), .set_global, &.{0}),
-                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .closure, &.{ 1, 0 }),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
@@ -1160,7 +1160,7 @@ test "let statement scopes" {
                 } },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .closure, &.{ 1, 0 }),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
@@ -1187,7 +1187,7 @@ test "let statement scopes" {
                 } },
             },
             .expected_instructions = &.{
-                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .closure, &.{ 2, 0 }),
                 try code.make(arena.allocator(), .pop, &.{}),
             },
         },
