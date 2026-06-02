@@ -66,13 +66,21 @@ pub fn run(self: *Self) !void {
         const op: code.Opcode = @enumFromInt(ins[ip]);
 
         switch (op) {
+            .get_free => {
+                const free_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
+                self.currentFrame().ip += 1;
+
+                const current_closure = self.currentFrame().closure;
+
+                try self.push(current_closure.free[free_index]);
+            },
             .closure => {
                 const index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                _ = std.mem.readInt(u8, ins[ip + 3 ..][0..1], .big);
+                const num_free = std.mem.readInt(u8, ins[ip + 3 ..][0..1], .big);
 
                 self.currentFrame().ip += 3;
 
-                try self.pushClosure(index);
+                try self.pushClosure(index, num_free);
             },
             .return_value => {
                 const rv = self.pop();
@@ -434,7 +442,7 @@ fn popFrame(self: *Self) *Frame {
     return self.frames[self.frames_index];
 }
 
-fn pushClosure(self: *Self, index: usize) !void {
+fn pushClosure(self: *Self, index: usize, num_free: usize) !void {
     const constant = self.constants[index];
 
     const fn_obj = switch (constant) {
@@ -442,7 +450,16 @@ fn pushClosure(self: *Self, index: usize) !void {
         else => return error.NotCompiledFunctionObject,
     };
 
-    const closure: object.Closure = .{ .func = fn_obj };
+    const free = try self.allocator.alloc(object.Object, num_free);
+    var i: usize = 0;
+
+    while (i < num_free) : (i += 1) {
+        free[i] = self.stack[self.sp - num_free + i];
+    }
+
+    self.sp = self.sp - num_free;
+
+    const closure: object.Closure = .{ .func = fn_obj, .free = free };
 
     try self.push(.{ .closure = closure });
 }
@@ -927,6 +944,26 @@ test "builtin functions" {
         .{ .input = "rest([1, 2, 3])", .expected = .{ .array = &.{ 2, 3 } } },
         .{ .input = "rest([])", .expected = .null_ },
         .{ .input = "push([], 1)", .expected = .{ .array = &.{1} } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "closures" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input =
+            \\let newClosure = fn(a) {
+            \\  fn() { a; };
+            \\};
+            \\let closure = newClosure(99);
+            \\closure();
+            ,
+            .expected = .{ .integer = 99 },
+        },
     };
 
     try runVMTests(arena.allocator(), &tests);

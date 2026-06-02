@@ -5,6 +5,7 @@ pub const SymbolScope = enum {
     global,
     local,
     builtin,
+    free,
 };
 
 pub const Symbol = struct {
@@ -18,12 +19,14 @@ const Self = @This();
 store: std.StringHashMap(Symbol),
 num_definitions: usize = 0,
 outer: ?*Self = null,
+free_symbols: std.ArrayList(Symbol),
 
 pub fn init(allocator: std.mem.Allocator) !*Self {
     const new = try allocator.create(Self);
 
     new.* = Self{
         .store = std.StringHashMap(Symbol).init(allocator),
+        .free_symbols = std.ArrayList(Symbol).empty,
     };
 
     return new;
@@ -54,18 +57,36 @@ pub fn define(self: *Self, name: []const u8) !Symbol {
     return symbol;
 }
 
-pub fn resolve(self: *const Self, name: []const u8) ?Symbol {
-    return self.store.get(name) orelse {
-        if (self.outer) |outer| return outer.resolve(name);
+pub fn resolve(self: *Self, name: []const u8) !?Symbol {
+    if (self.store.get(name)) |obj| return obj;
 
-        return null;
-    };
+    if (self.outer) |outer| {
+        const obj = try outer.resolve(name) orelse return null;
+
+        if (obj.scope == .global or obj.scope == .builtin) return obj;
+
+        return try self.defineFree(obj);
+    }
+
+    return error.SymbolNotInScope;
 }
 
 pub fn defineBuiltin(self: *Self, index: usize, name: []const u8) !Symbol {
     const owned = try self.store.allocator.dupe(u8, name);
 
     const symbol = Symbol{ .name = owned, .index = index, .scope = .builtin };
+
+    try self.store.put(owned, symbol);
+
+    return symbol;
+}
+
+pub fn defineFree(self: *Self, original: Symbol) !Symbol {
+    try self.free_symbols.append(self.store.allocator, original);
+
+    const owned = try self.store.allocator.dupe(u8, original.name);
+
+    const symbol = Symbol{ .name = owned, .scope = .free, .index = self.free_symbols.items.len - 1 };
 
     try self.store.put(owned, symbol);
 
@@ -133,7 +154,7 @@ test "resolve global" {
     };
 
     for (expected) |sym| {
-        const result = global.resolve(sym.name) orelse return error.SymbolNotInScope;
+        const result = try global.resolve(sym.name) orelse return error.SymbolNotInScope;
 
         try testing.expectEqualStrings(sym.name, result.name);
         try testing.expectEqual(sym.scope, result.scope);
@@ -161,7 +182,7 @@ test "resolve local" {
     };
 
     for (expected) |sym| {
-        const result = local.resolve(sym.name) orelse return error.SymbolNotInScope;
+        const result = try local.resolve(sym.name) orelse return error.SymbolNotInScope;
 
         try testing.expectEqualStrings(sym.name, result.name);
         try testing.expectEqual(sym.scope, result.scope);
@@ -211,7 +232,7 @@ test "resolve nested local" {
 
     for (tests) |t| {
         for (t.expected_symbols) |sym| {
-            const result = t.table.resolve(sym.name) orelse return error.SymbolNotInScope;
+            const result = try t.table.resolve(sym.name) orelse return error.SymbolNotInScope;
 
             try testing.expectEqualStrings(sym.name, result.name);
             try testing.expectEqual(sym.scope, result.scope);
@@ -243,11 +264,116 @@ test "define and resolve builtins" {
 
     for (symbol_tables) |table| {
         for (expected) |sym| {
-            const result = table.resolve(sym.name) orelse return error.SymbolNotInScope;
+            const result = try table.resolve(sym.name) orelse return error.SymbolNotInScope;
 
             try testing.expectEqualStrings(sym.name, result.name);
             try testing.expectEqual(sym.scope, result.scope);
             try testing.expectEqual(sym.index, result.index);
         }
+    }
+}
+
+test "resolve free" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const global = try init(arena.allocator());
+    _ = try global.define("a");
+    _ = try global.define("b");
+
+    const first = try initEnclosed(arena.allocator(), global);
+    _ = try first.define("c");
+    _ = try first.define("d");
+
+    const second = try initEnclosed(arena.allocator(), first);
+    _ = try second.define("e");
+    _ = try second.define("f");
+
+    const tests = [_]struct {
+        table: *Self,
+        expected_symbols: []const Symbol,
+        expected_free_symbols: []const Symbol,
+    }{
+        .{
+            .table = first,
+            .expected_symbols = &.{
+                .{ .name = "a", .scope = .global, .index = 0 },
+                .{ .name = "b", .scope = .global, .index = 1 },
+                .{ .name = "c", .scope = .local, .index = 0 },
+                .{ .name = "d", .scope = .local, .index = 1 },
+            },
+            .expected_free_symbols = &.{},
+        },
+        .{
+            .table = second,
+            .expected_symbols = &.{
+                .{ .name = "a", .scope = .global, .index = 0 },
+                .{ .name = "b", .scope = .global, .index = 1 },
+                .{ .name = "c", .scope = .free, .index = 0 },
+                .{ .name = "d", .scope = .free, .index = 1 },
+                .{ .name = "e", .scope = .local, .index = 0 },
+                .{ .name = "f", .scope = .local, .index = 1 },
+            },
+            .expected_free_symbols = &.{
+                .{ .name = "c", .scope = .local, .index = 0 },
+                .{ .name = "d", .scope = .local, .index = 1 },
+            },
+        },
+    };
+
+    for (tests) |t| {
+        for (t.expected_symbols) |sym| {
+            const result = try t.table.resolve(sym.name) orelse return error.SymbolNotInScope;
+
+            try testing.expectEqualStrings(sym.name, result.name);
+            try testing.expectEqual(sym.scope, result.scope);
+            try testing.expectEqual(sym.index, result.index);
+        }
+
+        try testing.expectEqual(t.table.free_symbols.items.len, t.expected_free_symbols.len);
+
+        for (t.expected_free_symbols, 0..) |sym, i| {
+            const result = t.table.free_symbols.items[i];
+
+            try testing.expectEqualStrings(sym.name, result.name);
+            try testing.expectEqual(sym.scope, result.scope);
+            try testing.expectEqual(sym.index, result.index);
+        }
+    }
+}
+
+test "resolve unresolvable free" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const global = try init(arena.allocator());
+    _ = try global.define("a");
+
+    const first = try initEnclosed(arena.allocator(), global);
+    _ = try first.define("c");
+
+    const second = try initEnclosed(arena.allocator(), first);
+    _ = try second.define("e");
+    _ = try second.define("f");
+
+    const expected: []const Symbol = &.{
+        .{ .name = "a", .scope = .global, .index = 0 },
+        .{ .name = "c", .scope = .free, .index = 0 },
+        .{ .name = "e", .scope = .local, .index = 0 },
+        .{ .name = "f", .scope = .local, .index = 1 },
+    };
+
+    for (expected) |sym| {
+        const result = try second.resolve(sym.name) orelse return error.SymbolNotInScope;
+
+        try testing.expectEqualStrings(sym.name, result.name);
+        try testing.expectEqual(sym.scope, result.scope);
+        try testing.expectEqual(sym.index, result.index);
+    }
+
+    const expect_unresolvable: []const []const u8 = &.{ "b", "d" };
+
+    for (expect_unresolvable) |name| {
+        try testing.expectError(error.SymbolNotInScope, second.resolve(name));
     }
 }

@@ -331,7 +331,7 @@ pub const Closure = struct {
     const Self = @This();
 
     func: CompiledFunction,
-    free: []const *Object = &.{},
+    free: []Object = &.{},
 
     pub fn kind(self: Self) []const u8 {
         _ = self;
