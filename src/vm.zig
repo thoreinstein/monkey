@@ -20,7 +20,7 @@ pub const global_size: usize = 65536;
 
 allocator: std.mem.Allocator,
 constants: []object.Object,
-frames: []*Frame,
+frames: []Frame,
 frames_index: usize,
 globals: []object.Object,
 sp: usize,
@@ -33,10 +33,8 @@ pub fn init(allocator: std.mem.Allocator, bytecode: ByteCode) !Self {
 
     const main_closure: object.Closure = .{ .func = main_fn };
 
-    const main_frame = try Frame.init(allocator, main_closure, 0);
-
-    const frames = try allocator.alloc(*Frame, max_frames);
-    frames[0] = main_frame;
+    const frames = try allocator.alloc(Frame, max_frames);
+    frames[0] = Frame.init(main_closure, 0);
 
     return .{
         .allocator = allocator,
@@ -379,7 +377,7 @@ fn callFunction(self: *Self, fn_obj: object.CompiledFunction, num_args: usize) !
 
     const closure: object.Closure = .{ .func = fn_obj };
 
-    const frame = try Frame.init(self.allocator, closure, self.sp - num_args);
+    const frame = Frame.init(closure, self.sp - num_args);
     self.pushFrame(frame);
     self.sp = frame.base_pointer + fn_obj.num_locals;
 }
@@ -397,7 +395,7 @@ fn callBuiltin(self: *Self, builtin: object.Builtin, num_args: usize) !void {
 fn callClosure(self: *Self, cl: object.Closure, num_args: usize) !void {
     if (num_args != cl.func.num_parameters) return error.WrongNumberOfArguments;
 
-    const frame = try Frame.init(self.allocator, cl, self.sp - num_args);
+    const frame = Frame.init(cl, self.sp - num_args);
     self.pushFrame(frame);
 
     self.sp = frame.base_pointer + cl.func.num_locals;
@@ -432,11 +430,11 @@ fn buildHash(self: *Self, start: usize, end: usize) !object.Object {
     return .{ .hash = .{ .pairs = hashedPairs } };
 }
 
-fn currentFrame(self: *const Self) *Frame {
-    return self.frames[self.frames_index - 1];
+fn currentFrame(self: *Self) *Frame {
+    return &self.frames[self.frames_index - 1];
 }
 
-fn pushFrame(self: *Self, f: *Frame) void {
+fn pushFrame(self: *Self, f: Frame) void {
     self.frames[self.frames_index] = f;
     self.frames_index += 1;
 }
@@ -444,7 +442,7 @@ fn pushFrame(self: *Self, f: *Frame) void {
 fn popFrame(self: *Self) *Frame {
     self.frames_index -= 1;
 
-    return self.frames[self.frames_index];
+    return &self.frames[self.frames_index];
 }
 
 fn pushClosure(self: *Self, index: usize, num_free: usize) !void {
