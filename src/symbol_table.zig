@@ -6,6 +6,7 @@ pub const SymbolScope = enum {
     local,
     builtin,
     free,
+    function,
 };
 
 pub const Symbol = struct {
@@ -87,6 +88,16 @@ pub fn defineFree(self: *Self, original: Symbol) !Symbol {
     const owned = try self.store.allocator.dupe(u8, original.name);
 
     const symbol = Symbol{ .name = owned, .scope = .free, .index = self.free_symbols.items.len - 1 };
+
+    try self.store.put(owned, symbol);
+
+    return symbol;
+}
+
+pub fn defineFunctionName(self: *Self, name: []const u8) !Symbol {
+    const owned = try self.store.allocator.dupe(u8, name);
+
+    const symbol = Symbol{ .name = owned, .index = 0, .scope = .function };
 
     try self.store.put(owned, symbol);
 
@@ -376,4 +387,37 @@ test "resolve unresolvable free" {
     for (expect_unresolvable) |name| {
         try testing.expectError(error.SymbolNotInScope, second.resolve(name));
     }
+}
+
+test "define and resolve function name" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const global = try init(arena.allocator());
+    _ = try global.defineFunctionName("a");
+
+    const sym = Symbol{ .name = "a", .scope = .function, .index = 0 };
+
+    const result = try global.resolve(sym.name) orelse return error.SymbolNotInScope;
+
+    try testing.expectEqualStrings(sym.name, result.name);
+    try testing.expectEqual(sym.scope, result.scope);
+    try testing.expectEqual(sym.index, result.index);
+}
+
+test "shadowing function name" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const global = try init(arena.allocator());
+    _ = try global.defineFunctionName("a");
+    _ = try global.define("a");
+
+    const sym = Symbol{ .name = "a", .scope = .global, .index = 0 };
+
+    const result = try global.resolve(sym.name) orelse return error.SymbolNotInScope;
+
+    try testing.expectEqualStrings(sym.name, result.name);
+    try testing.expectEqual(sym.scope, result.scope);
+    try testing.expectEqual(sym.index, result.index);
 }

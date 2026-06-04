@@ -273,6 +273,7 @@ pub const FunctionLiteral = struct {
     token: token.Token,
     parameters: std.ArrayList(Identifier) = .empty,
     body: ?BlockStatement = null,
+    name: []const u8,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return self.token.literal;
@@ -280,6 +281,7 @@ pub const FunctionLiteral = struct {
 
     pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
         try out.writeAll(self.tokenLiteral());
+        if (self.name.len > 0) try out.writeAll(self.name);
         try out.writeByte('(');
         for (self.parameters.items, 0..) |p, i| {
             if (i != 0) try out.writeAll(", ");

@@ -66,6 +66,11 @@ pub fn run(self: *Self) !void {
         const op: code.Opcode = @enumFromInt(ins[ip]);
 
         switch (op) {
+            .current_closure => {
+                const current_closure = self.currentFrame().closure;
+
+                try self.push(.{ .closure = current_closure });
+            },
             .get_free => {
                 const free_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
                 self.currentFrame().ip += 1;
@@ -963,6 +968,29 @@ test "closures" {
             \\closure();
             ,
             .expected = .{ .integer = 99 },
+        },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
+test "recursive functions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{
+            .input =
+            \\let countDown = fn(x) {
+            \\  if (x == 0) {
+            \\    return 0;
+            \\  } else {
+            \\    countDown(x - 1);
+            \\  }
+            \\};
+            \\countDown(1);
+            ,
+            .expected = .{ .integer = 0 },
         },
     };
 

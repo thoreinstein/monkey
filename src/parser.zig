@@ -133,6 +133,11 @@ fn parseLetStatement(self: *Self) !?ast.LetStatement {
 
     statement.value = try self.parseExpression(.lowest);
 
+    switch (statement.value.?.*) {
+        .function_literal => |*fl| fl.name = statement.name.value,
+        else => {},
+    }
+
     if (self.peekTokenIs(.semicolon)) self.nextToken();
 
     return statement;
@@ -463,6 +468,7 @@ fn parseIfExpression(self: *Self) !?*ast.Expression {
 fn parseFunctionLiteral(self: *Self) !?*ast.Expression {
     var literal = ast.FunctionLiteral{
         .token = self.current_token,
+        .name = undefined,
     };
 
     if (!(try self.expectPeek(.lparen))) return null;
@@ -910,6 +916,33 @@ test "function literals" {
     };
 
     try testInfixExpression(body_stmt.expression.?, .{ .ident = "x" }, "+", .{ .ident = "y" });
+}
+
+test "function literal with name" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const input = "let myFunction = fn() {};";
+
+    const program = try parseAndCheckProgram(arena.allocator(), input, 1);
+
+    const let_stmt = switch (program.statements.items[0]) {
+        .let_statement => |ls| ls,
+        else => {
+            std.debug.print("stmt not LetStatement. got={s}\n", .{@tagName(program.statements.items[0])});
+            return error.WrongStatementType;
+        },
+    };
+
+    const fn_obj = switch (let_stmt.value.?.*) {
+        .function_literal => |fl| fl,
+        else => {
+            std.debug.print("stmt.value not FunctionLiteral. got={s}\n", .{@tagName(let_stmt.value.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqualStrings("myFunction", fn_obj.name);
 }
 
 test "function parameters" {
