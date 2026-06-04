@@ -34,4 +34,17 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
+
+    const bench = b.addExecutable(.{
+        .name = "benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/benchmark.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_bench = b.addRunArtifact(bench);
+    const bench_step = b.step("bench", "Benchmark VM vs interpreter");
+    bench_step.dependOn(&run_bench.step);
 }
