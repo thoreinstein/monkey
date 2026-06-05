@@ -99,7 +99,8 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
 
                     for (free_symbols.items) |s| try self.loadSymbols(allocator, s);
 
-                    const compiledFn: object.CompiledFunction = .{
+                    const compiledFn = try allocator.create(object.CompiledFunction);
+                    compiledFn.* = .{
                         .instructions = instructions,
                         .num_locals = num_locals,
                         .num_parameters = fl.parameters.items.len,

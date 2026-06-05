@@ -30,18 +30,18 @@ pub const ObjectType = enum {
 pub const Object = union(enum) {
     const Self = @This();
 
-    array: Array,
+    array: *Array,
     boolean: Boolean,
     builtin: Builtin,
-    compiled_function: CompiledFunction,
+    compiled_function: *CompiledFunction,
     error_: Error,
-    function: Function,
-    hash: Hash,
+    function: *Function,
+    hash: *Hash,
     integer: Integer,
     null_: Null,
     return_value: ReturnValue,
     string: String,
-    closure: Closure,
+    closure: *Closure,
 
     pub fn kind(self: Self) []const u8 {
         return switch (self) {
@@ -330,7 +330,7 @@ pub const CompiledFunction = struct {
 pub const Closure = struct {
     const Self = @This();
 
-    func: CompiledFunction,
+    func: *CompiledFunction,
     free: []Object = &.{},
 
     pub fn kind(self: Self) []const u8 {
@@ -375,4 +375,11 @@ test "boolean hash key" {
     try testing.expectEqual(true1.hashKey().value, true2.hashKey().value);
     try testing.expectEqual(false1.hashKey().value, false2.hashKey().value);
     try testing.expect(true1.hashKey().value != false1.hashKey().value);
+}
+
+test "object size" {
+    std.debug.print("Object: {d} bytes\n", .{@sizeOf(Object)});
+    std.debug.print("  Function: {d}  Hash: {d}  Closure: {d}  Array: {d}\n", .{
+        @sizeOf(Function), @sizeOf(Hash), @sizeOf(Closure), @sizeOf(Array),
+    });
 }

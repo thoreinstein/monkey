@@ -104,7 +104,10 @@ fn restBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?obje
                 var new_list = std.ArrayList(object.Object).empty;
                 try new_list.appendSlice(allocator, tail);
 
-                return .{ .array = .{ .elements = new_list } };
+                const array = try allocator.create(object.Array);
+                array.* = .{ .elements = new_list };
+
+                return .{ .array = array };
             }
 
             return null;
@@ -130,7 +133,10 @@ fn pushBuiltin(allocator: std.mem.Allocator, args: []const object.Object) !?obje
             try new_list.appendSlice(allocator, a.elements.items);
             try new_list.append(allocator, args[1]);
 
-            return .{ .array = .{ .elements = new_list } };
+            const array = try allocator.create(object.Array);
+            array.* = .{ .elements = new_list };
+
+            return .{ .array = array };
         },
         else => {
             const msg = try std.fmt.allocPrint(allocator, "argument to `first` must be ARRAY, got={s}", .{args[0].kind()});

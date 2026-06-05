@@ -27,11 +27,13 @@ sp: usize,
 stack: []object.Object,
 
 pub fn init(allocator: std.mem.Allocator, bytecode: ByteCode) !Self {
-    const main_fn: object.CompiledFunction = .{
+    const main_fn = try allocator.create(object.CompiledFunction);
+    main_fn.* = .{
         .instructions = bytecode.instructions,
     };
 
-    const main_closure: object.Closure = .{ .func = main_fn };
+    const main_closure = try allocator.create(object.Closure);
+    main_closure.* = .{ .func = main_fn };
 
     const frames = try allocator.alloc(Frame, max_frames);
     frames[0] = Frame.init(main_closure, 0);
@@ -56,24 +58,26 @@ pub fn initWithGlobalStore(allocator: std.mem.Allocator, bytecode: ByteCode, s: 
 }
 
 pub fn run(self: *Self) !void {
-    while (self.currentFrame().ip < @as(i64, @intCast(self.currentFrame().instructions().len)) - 1) {
-        self.currentFrame().ip += 1;
+    var frame = self.currentFrame();
+    var ins = frame.instructions();
 
-        const ip: usize = @intCast(self.currentFrame().ip);
-        const ins = self.currentFrame().instructions();
+    while (frame.ip < @as(i64, @intCast(ins.len)) - 1) {
+        frame.ip += 1;
+
+        const ip: usize = @intCast(frame.ip);
         const op: code.Opcode = @enumFromInt(ins[ip]);
 
         switch (op) {
             .current_closure => {
-                const current_closure = self.currentFrame().closure;
+                const current_closure = frame.closure;
 
                 try self.push(.{ .closure = current_closure });
             },
             .get_free => {
                 const free_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                self.currentFrame().ip += 1;
+                frame.ip += 1;
 
-                const current_closure = self.currentFrame().closure;
+                const current_closure = frame.closure;
 
                 try self.push(current_closure.free[free_index]);
             },
@@ -81,29 +85,38 @@ pub fn run(self: *Self) !void {
                 const index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
                 const num_free = std.mem.readInt(u8, ins[ip + 3 ..][0..1], .big);
 
-                self.currentFrame().ip += 3;
+                frame.ip += 3;
 
                 try self.pushClosure(index, num_free);
             },
             .return_value => {
                 const rv = self.pop();
 
-                const frame = self.popFrame();
-                self.sp = frame.base_pointer - 1;
+                const popped = self.popFrame();
+                self.sp = popped.base_pointer - 1;
 
                 try self.push(rv);
+
+                frame = self.currentFrame();
+                ins = frame.instructions();
             },
             .return_ => {
-                const frame = self.popFrame();
-                self.sp = frame.base_pointer - 1;
+                const popped = self.popFrame();
+                self.sp = popped.base_pointer - 1;
 
                 try self.push(.null_);
+
+                frame = self.currentFrame();
+                ins = frame.instructions();
             },
             .call => {
                 const num_args = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                self.currentFrame().ip += 1;
+                frame.ip += 1;
 
                 try self.executeCall(num_args);
+
+                frame = self.currentFrame();
+                ins = frame.instructions();
             },
             .index => {
                 const index = self.pop();
@@ -113,7 +126,7 @@ pub fn run(self: *Self) !void {
             },
             .hash => {
                 const num_elem: usize = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                self.currentFrame().ip += 2;
+                frame.ip += 2;
 
                 const hash = try self.buildHash(self.sp - num_elem, self.sp);
 
@@ -123,7 +136,7 @@ pub fn run(self: *Self) !void {
             },
             .array => {
                 const num_elem: usize = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                self.currentFrame().ip += 2;
+                frame.ip += 2;
 
                 const array = try self.buildArray(self.sp - num_elem, self.sp);
 
@@ -133,7 +146,7 @@ pub fn run(self: *Self) !void {
             },
             .get_builtin => {
                 const builtin_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                self.currentFrame().ip += 1;
+                frame.ip += 1;
 
                 const definition = builtins[builtin_index];
 
@@ -141,49 +154,49 @@ pub fn run(self: *Self) !void {
             },
             .get_global => {
                 const global_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                self.currentFrame().ip += 2;
+                frame.ip += 2;
 
                 try self.push(self.globals[global_index]);
             },
             .get_local => {
                 const local_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                self.currentFrame().ip += 1;
+                frame.ip += 1;
 
-                const frame = self.currentFrame();
+                frame = self.currentFrame();
 
                 try self.push(self.stack[frame.base_pointer + local_index]);
             },
             .set_global => {
                 const global_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                self.currentFrame().ip += 2;
+                frame.ip += 2;
 
                 self.globals[global_index] = self.pop();
             },
             .set_local => {
                 const local_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                self.currentFrame().ip += 1;
+                frame.ip += 1;
 
-                const frame = self.currentFrame();
+                frame = self.currentFrame();
 
                 self.stack[frame.base_pointer + local_index] = self.pop();
             },
             .constant => {
                 const const_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                self.currentFrame().ip += 2;
+                frame.ip += 2;
 
                 try self.push(self.constants[const_index]);
             },
             .jump => {
                 const pos: i64 = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                self.currentFrame().ip = pos - 1;
+                frame.ip = pos - 1;
             },
             .jump_not_truthy => {
                 const pos: i64 = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                self.currentFrame().ip += 2;
+                frame.ip += 2;
 
                 const condition = self.pop();
 
-                if (!isTruthy(condition)) self.currentFrame().ip = pos - 1;
+                if (!isTruthy(condition)) frame.ip = pos - 1;
             },
             .add, .sub, .mul, .div => try self.executeBinaryOperation(op),
             .true_ => try self.push(.{ .boolean = .{ .value = true } }),
@@ -225,14 +238,11 @@ fn executeBinaryOperation(self: *Self, op: code.Opcode) !void {
     const right = self.pop();
     const left = self.pop();
 
-    const left_kind = left.kind();
-    const right_kind = right.kind();
-
-    if (std.mem.eql(u8, object.INTEGER_OBJ, left_kind) and std.mem.eql(u8, object.INTEGER_OBJ, right_kind)) {
+    if (left == .integer and right == .integer) {
         return try self.executeBinaryIntegerOperation(op, left, right);
     }
 
-    if (std.mem.eql(u8, object.STRING_OBJ, left_kind) and std.mem.eql(u8, object.STRING_OBJ, right_kind)) {
+    if (left == .string and right == .string) {
         return try self.executeBinaryStringOperation(op, left, right);
     }
 
@@ -271,7 +281,7 @@ fn executeComparison(self: *Self, op: code.Opcode) !void {
     const right = self.pop();
     const left = self.pop();
 
-    if (std.mem.eql(u8, object.INTEGER_OBJ, left.kind()) and std.mem.eql(u8, object.INTEGER_OBJ, right.kind())) {
+    if (left == .integer and right == .integer) {
         try self.executeIntegerComparison(op, left, right);
 
         return;
@@ -318,7 +328,7 @@ fn executeBangOperator(self: *Self) !void {
 fn executeMinusOperator(self: *Self) !void {
     const operand = self.pop();
 
-    if (std.mem.eql(u8, object.INTEGER_OBJ, operand.kind())) {
+    if (operand == .integer) {
         const value = operand.integer.value;
 
         return try self.push(.{ .integer = .{ .value = -value } });
@@ -328,7 +338,7 @@ fn executeMinusOperator(self: *Self) !void {
 }
 
 fn executeIndexOperation(self: *Self, left: object.Object, index: object.Object) !void {
-    if (std.mem.eql(u8, object.ARRAY_OBJ, left.kind()) and std.mem.eql(u8, object.INTEGER_OBJ, index.kind())) {
+    if (left == .array and index == .integer) {
         return self.executeArrayIndex(left, index);
     }
 
@@ -372,10 +382,11 @@ fn executeCall(self: *Self, num_args: usize) !void {
     }
 }
 
-fn callFunction(self: *Self, fn_obj: object.CompiledFunction, num_args: usize) !void {
+fn callFunction(self: *Self, fn_obj: *object.CompiledFunction, num_args: usize) !void {
     if (num_args != fn_obj.num_parameters) return error.WrongNumberOfArguments;
 
-    const closure: object.Closure = .{ .func = fn_obj };
+    const closure = try self.allocator.create(object.Closure);
+    closure.* = .{ .func = fn_obj };
 
     const frame = Frame.init(closure, self.sp - num_args);
     self.pushFrame(frame);
@@ -392,7 +403,7 @@ fn callBuiltin(self: *Self, builtin: object.Builtin, num_args: usize) !void {
     }
 }
 
-fn callClosure(self: *Self, cl: object.Closure, num_args: usize) !void {
+fn callClosure(self: *Self, cl: *object.Closure, num_args: usize) !void {
     if (num_args != cl.func.num_parameters) return error.WrongNumberOfArguments;
 
     const frame = Frame.init(cl, self.sp - num_args);
@@ -409,7 +420,10 @@ fn buildArray(self: *Self, start: usize, end: usize) !object.Object {
         try elements.append(self.allocator, self.stack[i]);
     }
 
-    return .{ .array = .{ .elements = elements } };
+    const array = try self.allocator.create(object.Array);
+    array.* = .{ .elements = elements };
+
+    return .{ .array = array };
 }
 
 fn buildHash(self: *Self, start: usize, end: usize) !object.Object {
@@ -427,7 +441,10 @@ fn buildHash(self: *Self, start: usize, end: usize) !object.Object {
         try hashedPairs.put(hashed, pair);
     }
 
-    return .{ .hash = .{ .pairs = hashedPairs } };
+    const hash = try self.allocator.create(object.Hash);
+    hash.* = .{ .pairs = hashedPairs };
+
+    return .{ .hash = hash };
 }
 
 fn currentFrame(self: *Self) *Frame {
@@ -462,7 +479,8 @@ fn pushClosure(self: *Self, index: usize, num_free: usize) !void {
 
     self.sp = self.sp - num_free;
 
-    const closure: object.Closure = .{ .func = fn_obj, .free = free };
+    const closure = try self.allocator.create(object.Closure);
+    closure.* = .{ .func = fn_obj, .free = free };
 
     try self.push(.{ .closure = closure });
 }

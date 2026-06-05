@@ -63,7 +63,11 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
                     return try evalInfixExpression(allocator, ie.operator, left, right);
                 },
                 .function_literal => |f| {
-                    return .{ .function = .{ .parameters = f.parameters, .body = f.body.?, .env = env } };
+                    const func = try allocator.create(object.Function);
+
+                    func.* = .{ .parameters = f.parameters, .body = f.body.?, .env = env };
+
+                    return .{ .function = func };
                 },
                 .call_expression => |ce| {
                     const function = try eval(allocator, .{ .expression = ce.function.?.* }, env) orelse return null;
@@ -81,7 +85,10 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
 
                     if (elements.items.len == 1 and isError(elements.items[0])) return elements.items[0];
 
-                    return .{ .array = .{ .elements = elements } };
+                    const array = try allocator.create(object.Array);
+                    array.* = .{ .elements = elements };
+
+                    return .{ .array = array };
                 },
                 .index_expression => |ie| {
                     const left = try eval(allocator, .{ .expression = ie.left.?.* }, env) orelse return null;
@@ -214,9 +221,10 @@ fn evalHashLiteral(allocator: std.mem.Allocator, node: ast.HashLiteral, env: *En
         try pairs.put(hashed, .{ .key = key, .value = value });
     }
 
-    return .{
-        .hash = .{ .pairs = pairs },
-    };
+    const hash = try allocator.create(object.Hash);
+    hash.* = .{ .pairs = pairs };
+
+    return .{ .hash = hash };
 }
 
 fn evalBangOperatorExpression(right: object.Object) object.Object {
@@ -367,7 +375,7 @@ fn applyFunction(allocator: std.mem.Allocator, func: object.Object, args: std.Ar
     }
 }
 
-fn extendFunctionEnv(allocator: std.mem.Allocator, func: object.Function, args: std.ArrayList(object.Object)) !*Environment {
+fn extendFunctionEnv(allocator: std.mem.Allocator, func: *object.Function, args: std.ArrayList(object.Object)) !*Environment {
     var env = try allocator.create(Environment);
     env.* = Environment.initEnclosedEnvironment(allocator, func.env);
 

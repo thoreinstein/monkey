@@ -5,11 +5,11 @@ const object = @import("object.zig");
 
 const Self = @This();
 
-closure: object.Closure,
+closure: *object.Closure,
 ip: i64,
 base_pointer: usize,
 
-pub fn init(cl: object.Closure, base_pointer: usize) Self {
+pub fn init(cl: *object.Closure, base_pointer: usize) Self {
     return .{
         .closure = cl,
         .ip = -1,
