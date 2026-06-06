@@ -30,6 +30,8 @@ pub const TokenKind = enum {
     gt,
     eq,
     not_eq,
+    plus_assign,
+    minus_assign,
 
     // delimeters
     comma,

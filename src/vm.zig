@@ -1028,6 +1028,18 @@ test "variable assignment" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "+= and -=" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "let x = 1; x += 2; x;", .expected = .{ .integer = 3 } },
+        .{ .input = "let x = 10; x -= 4; x;", .expected = .{ .integer = 6 } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);

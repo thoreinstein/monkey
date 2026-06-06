@@ -64,6 +64,8 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerInfix(.lparen, Self.parseCallExpression);
     try parser.registerInfix(.lbracket, Self.parseIndexExpression);
     try parser.registerInfix(.assign, Self.parseAssignExpression);
+    try parser.registerInfix(.plus_assign, Self.parseOpAssignExpression);
+    try parser.registerInfix(.minus_assign, Self.parseOpAssignExpression);
 
     parser.nextToken();
     parser.nextToken();
@@ -225,6 +227,39 @@ fn parsePrefixExpression(self: *Self) !?*ast.Expression {
     };
 
     return new;
+}
+
+fn parseOpAssignExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
+    const ident = switch (left.*) {
+        .identifier_expression => |ie| ie,
+        else => {
+            const msg = try std.fmt.allocPrint(self.allocator, "invalid assignment target: {s}\n", .{@tagName(left.*)});
+            try self.errors_.append(self.allocator, msg);
+
+            return null;
+        },
+    };
+
+    const tok = self.current_token;
+    const operator: []const u8 = if (tok.kind == .plus_assign) "+" else "-";
+
+    self.nextToken();
+
+    const right = try self.parseExpression(.lowest) orelse return null;
+
+    const infix = try self.allocator.create(ast.Expression);
+    infix.* = .{ .infix_expression = .{
+        .token = tok,
+        .left = left,
+        .operator = operator,
+        .right = right,
+    } };
+
+    return .{ .assign_expression = .{
+        .token = tok,
+        .name = ident,
+        .value = infix,
+    } };
 }
 
 fn parseAssignExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
@@ -608,7 +643,7 @@ fn getPrecedence(t: token.TokenKind) Precedence {
         .asterisk, .slash => .product,
         .lparen => .call,
         .lbracket => .index,
-        .assign => .assign,
+        .assign, .plus_assign, .minus_assign => .assign,
         else => .lowest,
     };
 }
@@ -1260,6 +1295,50 @@ test "improper variable assignment" {
     };
 
     try testing.expectEqualStrings("invalid assignment target: integer_literal", parser.errors().items[0]);
+}
+
+test "plus assign" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const input = "x += 5;";
+
+    const program = try parseAndCheckProgram(arena.allocator(), input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const assign_expr = switch (expr_stmt.expression.?.*) {
+        .assign_expression => |ae| ae,
+        else => {
+            std.debug.print("stmt not AssignmentExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqualStrings("x", assign_expr.name.value);
+    try testInfixExpression(assign_expr.value, .{ .ident = "x" }, "+", .{ .int = 5 });
+}
+
+test "minus assign" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const input = "x -= 5;";
+
+    const program = try parseAndCheckProgram(arena.allocator(), input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const assign_expr = switch (expr_stmt.expression.?.*) {
+        .assign_expression => |ae| ae,
+        else => {
+            std.debug.print("stmt not AssignmentExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqualStrings("x", assign_expr.name.value);
+    try testInfixExpression(assign_expr.value, .{ .ident = "x" }, "-", .{ .int = 5 });
 }
 
 fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8, size: usize) !ast.Program {

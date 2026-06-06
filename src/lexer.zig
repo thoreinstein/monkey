@@ -24,14 +24,12 @@ pub fn nextToken(self: *Self) token.Token {
 
     const tok: token.Token = switch (self.ch) {
         ';' => .{ .kind = .semicolon, .literal = ";" },
-        '-' => .{ .kind = .minus, .literal = "-" },
         '*' => .{ .kind = .asterisk, .literal = "*" },
         '<' => .{ .kind = .lt, .literal = "<" },
         '>' => .{ .kind = .gt, .literal = ">" },
         '(' => .{ .kind = .lparen, .literal = "(" },
         ')' => .{ .kind = .rparen, .literal = ")" },
         ',' => .{ .kind = .comma, .literal = "," },
-        '+' => .{ .kind = .plus, .literal = "+" },
         '{' => .{ .kind = .lbrace, .literal = "{" },
         '}' => .{ .kind = .rbrace, .literal = "}" },
         '[' => .{ .kind = .lbracket, .literal = "[" },
@@ -39,6 +37,24 @@ pub fn nextToken(self: *Self) token.Token {
         ':' => .{ .kind = .colon, .literal = ":" },
         '"' => .{ .kind = .string, .literal = self.readString() },
         0 => .{ .kind = .eof, .literal = "" },
+        '-' => blk: {
+            if (self.peekChar() == '=') {
+                self.readChar();
+
+                break :blk .{ .kind = .minus_assign, .literal = "-=" };
+            }
+
+            break :blk .{ .kind = .minus, .literal = "-" };
+        },
+        '+' => blk: {
+            if (self.peekChar() == '=') {
+                self.readChar();
+
+                break :blk .{ .kind = .plus_assign, .literal = "+=" };
+            }
+
+            break :blk .{ .kind = .plus, .literal = "+" };
+        },
         '/' => blk: {
             if (self.peekChar() == '/') {
                 while (self.ch != '\n' and self.ch != 0) self.readChar();
@@ -165,6 +181,8 @@ test "next token" {
         \\let a = 5; // this is a comment
         \\// full line comment
         \\let b = a / 2;
+        \\x += 1;
+        \\x -= 1;
     ;
 
     const tests = [_]struct {
@@ -268,6 +286,14 @@ test "next token" {
         .{ .kind = .ident, .literal = "a" },
         .{ .kind = .slash, .literal = "/" },
         .{ .kind = .int, .literal = "2" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .ident, .literal = "x" },
+        .{ .kind = .plus_assign, .literal = "+=" },
+        .{ .kind = .int, .literal = "1" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .ident, .literal = "x" },
+        .{ .kind = .minus_assign, .literal = "-=" },
+        .{ .kind = .int, .literal = "1" },
         .{ .kind = .semicolon, .literal = ";" },
         .{ .kind = .eof, .literal = "" },
     };
