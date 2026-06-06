@@ -44,6 +44,15 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
                 .if_expression => |ie| return try evalIfExpression(allocator, ie, env),
                 .identifier_expression => |ie| return try evalIdentifier(allocator, ie, env),
                 .hash_literal => |hl| return try evalHashLiteral(allocator, hl, env),
+                .assign_expression => |ae| {
+                    const value = try eval(allocator, .{ .expression = ae.value.* }, env) orelse return null;
+
+                    if (isError(value)) return value;
+
+                    _ = env.assign(ae.name.value, value) orelse return null;
+
+                    return value;
+                },
                 .prefix_expression => |pe| {
                     const right = try eval(allocator, .{ .expression = pe.right.?.* }, env) orelse return null;
 
@@ -944,6 +953,47 @@ test "hash index expressions" {
         switch (t.expected) {
             .int => |i| try testIntegerObject(evaluated, i),
             .null_ => try testNullObject(evaluated),
+            else => return error.WrongExpectedType,
+        }
+    }
+}
+
+test "variable assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: Expected,
+    }{
+        .{ .input = "let x = 1; x = 5; x", .expected = .{ .int = 5 } },
+        .{ .input = "let x = 1; x = x + 1; x", .expected = .{ .int = 2 } },
+        .{ .input = "let x = 1; let y = (x = 5); y", .expected = .{ .int = 5 } },
+        .{ .input = "let x = 1; let f = fn() { x = 99}; f(); x;", .expected = .{ .int = 99 } },
+        .{ .input = "x = 5; x;", .expected = .{ .int = 5 } },
+    };
+
+    for (tests, 0..) |t, idx| {
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
+
+        errdefer std.debug.print("test[{d}] case failed: {s}\n", .{ idx, t.input });
+
+        switch (t.expected) {
+            .int => |i| try testIntegerObject(evaluated, i),
+            .error_ => |msg| {
+                const err = switch (evaluated) {
+                    .error_ => |e| e,
+                    else => {
+                        std.debug.print("expected error, got={s}\n", .{@tagName(evaluated)});
+                        return error.WrongObjectType;
+                    },
+                };
+
+                try testing.expectEqualStrings(msg, err.message);
+            },
             else => return error.WrongExpectedType,
         }
     }

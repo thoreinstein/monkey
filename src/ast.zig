@@ -52,6 +52,7 @@ pub const Expression = union(enum) {
     if_expression: IfExpression,
     call_expression: CallExpression,
     index_expression: IndexExpression,
+    assign_expression: AssignExpression,
 
     prefix_expression: PrefixExpression,
     infix_expression: InfixExpression,
@@ -392,6 +393,24 @@ pub const HashLiteral = struct {
             try p.value.write(out);
         }
         try out.writeByte('}');
+    }
+};
+
+pub const AssignExpression = struct {
+    const Self = @This();
+
+    token: token.Token,
+    name: Identifier,
+    value: *Expression,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try self.name.write(out);
+        try out.writeAll(" = ");
+        try self.value.write(out);
     }
 };
 

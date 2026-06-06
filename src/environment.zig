@@ -39,3 +39,15 @@ pub fn set(self: *Self, name: []const u8, value: object.Object) !object.Object {
     try self.store.put(owned_name, value);
     return value;
 }
+
+pub fn assign(self: *Self, name: []const u8, value: object.Object) ?object.Object {
+    if (self.store.getPtr(name)) |slot| {
+        slot.* = value;
+
+        return value;
+    }
+
+    if (self.outer) |outer| return outer.assign(name, value);
+
+    return null;
+}

@@ -10,6 +10,7 @@ const InfixParseFn = *const fn (*Self, *ast.Expression) anyerror!?ast.Expression
 
 const Precedence = enum(u8) {
     lowest = 1,
+    assign,
     equals,
     less_greater,
     sum,
@@ -62,6 +63,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerInfix(.gt, Self.parseInfixExpression);
     try parser.registerInfix(.lparen, Self.parseCallExpression);
     try parser.registerInfix(.lbracket, Self.parseIndexExpression);
+    try parser.registerInfix(.assign, Self.parseAssignExpression);
 
     parser.nextToken();
     parser.nextToken();
@@ -223,6 +225,31 @@ fn parsePrefixExpression(self: *Self) !?*ast.Expression {
     };
 
     return new;
+}
+
+fn parseAssignExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
+    const ident = switch (left.*) {
+        .identifier_expression => |ie| ie,
+        else => {
+            const msg = try std.fmt.allocPrint(self.allocator, "invalid assignment target: {s}", .{@tagName(left.*)});
+            try self.errors_.append(self.allocator, msg);
+            return null;
+        },
+    };
+
+    var expression = ast.AssignExpression{
+        .token = self.current_token,
+        .name = ident,
+        .value = undefined,
+    };
+
+    const precedence = self.currentPrecedence();
+
+    self.nextToken();
+
+    expression.value = try self.parseExpression(precedence) orelse return null;
+
+    return .{ .assign_expression = expression };
 }
 
 fn parseInfixExpression(self: *Self, left: *ast.Expression) !?ast.Expression {
@@ -581,6 +608,7 @@ fn getPrecedence(t: token.TokenKind) Precedence {
         .asterisk, .slash => .product,
         .lparen => .call,
         .lbracket => .index,
+        .assign => .assign,
         else => .lowest,
     };
 }
@@ -1043,6 +1071,7 @@ test "operator precedence" {
         .{ .input = "add(a + b + c * d / f + g)", .expected = "add((((a + b) + ((c * d) / f)) + g))", .size = 1 },
         .{ .input = "a * [1, 2, 3, 4][b * c] * d", .expected = "((a * ([1, 2, 3, 4][(b * c)])) * d)", .size = 1 },
         .{ .input = "add(a * b[2], b[1], 2 * [1, 2][1])", .expected = "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))", .size = 1 },
+        .{ .input = "x = y + 1", .expected = "x = (y + 1)", .size = 1 },
     };
 
     for (tests) |t| {
@@ -1191,6 +1220,46 @@ test "empty hash literal" {
     };
 
     try testing.expectEqual(@as(usize, 0), hash_lit.pairs.items.len);
+}
+
+test "variable assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const input = "x = 5;";
+
+    const program = try parseAndCheckProgram(arena.allocator(), input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const assign_expr = switch (expr_stmt.expression.?.*) {
+        .assign_expression => |ae| ae,
+        else => {
+            std.debug.print("stmt not AssignmentExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqualStrings("x", assign_expr.name.value);
+    try testIntegerLiteral(assign_expr.value, 5);
+}
+
+test "improper variable assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const input = "5 = x;";
+
+    const lexer = Lexer.init(input);
+    var parser = try init(arena.allocator(), lexer);
+    defer parser.deinit();
+
+    _ = try parser.parseProgram() orelse {
+        std.debug.print("parseProgram returned null\n", .{});
+        return error.ProgramParse;
+    };
+
+    try testing.expectEqualStrings("invalid assignment target: integer_literal", parser.errors().items[0]);
 }
 
 fn parseAndCheckProgram(allocator: std.mem.Allocator, input: []const u8, size: usize) !ast.Program {

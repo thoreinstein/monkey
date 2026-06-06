@@ -65,6 +65,23 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
         .program => |p| for (p.statements.items) |stmt| try self.compile(allocator, .{ .statement = stmt }),
         .expression => |e| {
             switch (e) {
+                .assign_expression => |ae| {
+                    const symbol = try self.symbol_table.resolve(ae.name.value) orelse return error.SymbolTableLookupFailed;
+
+                    try self.compile(allocator, .{ .expression = ae.value.* });
+
+                    switch (symbol.scope) {
+                        .global => {
+                            _ = try self.emit(allocator, .set_global, &.{symbol.index});
+                            _ = try self.emit(allocator, .get_global, &.{symbol.index});
+                        },
+                        .local => {
+                            _ = try self.emit(allocator, .set_local, &.{symbol.index});
+                            _ = try self.emit(allocator, .get_local, &.{symbol.index});
+                        },
+                        else => return error.InvalidAssignmentTarget,
+                    }
+                },
                 .call_expression => |ce| {
                     try self.compile(allocator, .{ .expression = ce.function.?.* });
 
@@ -1347,6 +1364,54 @@ test "recursive functions" {
     };
 
     try runCompilerTests(arena.allocator(), &tests);
+}
+
+test "variable assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "let x = 1; x = 2;",
+            .expected_constants = &.{
+                .{ .integer = 1 },
+                .{ .integer = 2 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
+test "invalid variable assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{ .input = "x = 5", .expected = error.SymbolNotInScope },
+        .{ .input = "fn() { let a = 1; fn() { a = 2; }; };", .expected = error.InvalidAssignmentTarget },
+    };
+
+    for (tests) |t| {
+        errdefer std.debug.print("test case failed: {s}\n", .{t.input});
+
+        const program = try parse(arena.allocator(), t.input);
+
+        var compiler = try init(arena.allocator());
+
+        try testing.expectError(t.expected, compiler.compile(arena.allocator(), .{ .program = program }));
+    }
 }
 
 test "let statement scopes" {

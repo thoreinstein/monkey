@@ -1013,6 +1013,21 @@ test "recursive functions" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "variable assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "let x = 1; x = 5; x;", .expected = .{ .integer = 5 } },
+        .{ .input = "let x = 1; x = x + 1; x;", .expected = .{ .integer = 2 } },
+        .{ .input = "let x = 1; let y = (x = 5); y;", .expected = .{ .integer = 5 } },
+        .{ .input = "let x = 1; let f = fn() { x = 99; }; f(); x;", .expected = .{ .integer = 99 } },
+        .{ .input = "let f = fn() { let a = 1; a = 2; a; }; f();", .expected = .{ .integer = 2 } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);
