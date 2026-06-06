@@ -25,7 +25,6 @@ pub fn nextToken(self: *Self) token.Token {
     const tok: token.Token = switch (self.ch) {
         ';' => .{ .kind = .semicolon, .literal = ";" },
         '-' => .{ .kind = .minus, .literal = "-" },
-        '/' => .{ .kind = .slash, .literal = "/" },
         '*' => .{ .kind = .asterisk, .literal = "*" },
         '<' => .{ .kind = .lt, .literal = "<" },
         '>' => .{ .kind = .gt, .literal = ">" },
@@ -40,6 +39,15 @@ pub fn nextToken(self: *Self) token.Token {
         ':' => .{ .kind = .colon, .literal = ":" },
         '"' => .{ .kind = .string, .literal = self.readString() },
         0 => .{ .kind = .eof, .literal = "" },
+        '/' => blk: {
+            if (self.peekChar() == '/') {
+                while (self.ch != '\n' and self.ch != 0) self.readChar();
+
+                return self.nextToken();
+            }
+
+            break :blk .{ .kind = .slash, .literal = "/" };
+        },
         '=' => blk: {
             if (self.peekChar() == '=') {
                 self.readChar();
@@ -154,6 +162,9 @@ test "next token" {
         \\"foo bar"
         \\[1, 2];
         \\{"foo": "bar"}
+        \\let a = 5; // this is a comment
+        \\// full line comment
+        \\let b = a / 2;
     ;
 
     const tests = [_]struct {
@@ -246,6 +257,18 @@ test "next token" {
         .{ .kind = .colon, .literal = ":" },
         .{ .kind = .string, .literal = "bar" },
         .{ .kind = .rbrace, .literal = "}" },
+        .{ .kind = .let, .literal = "let" },
+        .{ .kind = .ident, .literal = "a" },
+        .{ .kind = .assign, .literal = "=" },
+        .{ .kind = .int, .literal = "5" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .let, .literal = "let" },
+        .{ .kind = .ident, .literal = "b" },
+        .{ .kind = .assign, .literal = "=" },
+        .{ .kind = .ident, .literal = "a" },
+        .{ .kind = .slash, .literal = "/" },
+        .{ .kind = .int, .literal = "2" },
+        .{ .kind = .semicolon, .literal = ";" },
         .{ .kind = .eof, .literal = "" },
     };
 
