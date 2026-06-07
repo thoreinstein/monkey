@@ -42,6 +42,7 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
                 .string_literal => |s| return .{ .string = .{ .value = s.value } },
                 .boolean_expression => |be| return .{ .boolean = .{ .value = be.value } },
                 .if_expression => |ie| return try evalIfExpression(allocator, ie, env),
+                .while_expression => |we| return try evalWhileExpression(allocator, we, env),
                 .identifier_expression => |ie| return try evalIdentifier(allocator, ie, env),
                 .hash_literal => |hl| return try evalHashLiteral(allocator, hl, env),
                 .assign_expression => |ae| {
@@ -295,6 +296,25 @@ fn evalIntegerIntegerInfixExpression(allocator: std.mem.Allocator, operator: []c
     });
 
     return .{ .error_ = .{ .message = msg } };
+}
+
+fn evalWhileExpression(allocator: std.mem.Allocator, exp: ast.WhileExpression, env: *Environment) !?object.Object {
+    while (true) {
+        const condition = try eval(allocator, .{ .expression = exp.condition.* }, env) orelse return null;
+
+        if (isError(condition)) return condition;
+
+        if (!isTruthy(condition)) break;
+
+        const result = try eval(allocator, .{ .statement = .{ .block_statement = exp.body } }, env);
+
+        if (result) |r| {
+            if (isError(r)) return r;
+            if (r == .return_value) return r;
+        }
+    }
+
+    return .{ .null_ = .{} };
 }
 
 fn evalIfExpression(allocator: std.mem.Allocator, exp: ast.IfExpression, env: *Environment) !?object.Object {
@@ -997,6 +1017,20 @@ test "variable assignment" {
             else => return error.WrongExpectedType,
         }
     }
+}
+
+test "while loops" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const input = "let i = 0; while (i < 5) { i += 1;}; i;";
+
+    const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
+
+    try testIntegerObject(evaluated, 5);
 }
 
 fn testEval(allocator: std.mem.Allocator, input: []const u8, env: *Environment) !?object.Object {

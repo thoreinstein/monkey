@@ -183,6 +183,7 @@ test "next token" {
         \\let b = a / 2;
         \\x += 1;
         \\x -= 1;
+        \\while (i < 5) { i += 1; };
     ;
 
     const tests = [_]struct {
@@ -294,6 +295,19 @@ test "next token" {
         .{ .kind = .ident, .literal = "x" },
         .{ .kind = .minus_assign, .literal = "-=" },
         .{ .kind = .int, .literal = "1" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .while_, .literal = "while" },
+        .{ .kind = .lparen, .literal = "(" },
+        .{ .kind = .ident, .literal = "i" },
+        .{ .kind = .lt, .literal = "<" },
+        .{ .kind = .int, .literal = "5" },
+        .{ .kind = .rparen, .literal = ")" },
+        .{ .kind = .lbrace, .literal = "{" },
+        .{ .kind = .ident, .literal = "i" },
+        .{ .kind = .plus_assign, .literal = "+=" },
+        .{ .kind = .int, .literal = "1" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .rbrace, .literal = "}" },
         .{ .kind = .semicolon, .literal = ";" },
         .{ .kind = .eof, .literal = "" },
     };

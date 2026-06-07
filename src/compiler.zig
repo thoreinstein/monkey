@@ -160,6 +160,23 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
 
                     try self.loadSymbols(allocator, symbol);
                 },
+                .while_expression => |we| {
+                    const loop_start = self.currentInstructions().len;
+
+                    try self.compile(allocator, .{ .expression = we.condition.* });
+
+                    const not_truthy_pos = try self.emit(allocator, .jump_not_truthy, &.{9999});
+
+                    try self.compile(allocator, .{ .statement = .{ .block_statement = we.body } });
+
+                    _ = try self.emit(allocator, .jump, &.{loop_start});
+
+                    const after_loop_pos = self.currentInstructions().len;
+
+                    try self.changeOperand(allocator, not_truthy_pos, &.{after_loop_pos});
+
+                    _ = try self.emit(allocator, .null_, &.{});
+                },
                 .if_expression => |ie| {
                     try self.compile(allocator, .{ .expression = ie.condition.?.* });
 
@@ -1412,6 +1429,41 @@ test "invalid variable assignment" {
 
         try testing.expectError(t.expected, compiler.compile(arena.allocator(), .{ .program = program }));
     }
+}
+
+test "while expression" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "let x = 0; while (x < 5) { x += 1; };",
+            .expected_constants = &.{
+                .{ .integer = 0 },
+                .{ .integer = 5 },
+                .{ .integer = 1 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .greater_than, &.{}),
+                try code.make(arena.allocator(), .jump_not_truthy, &.{33}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .add, &.{}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .pop, &.{}),
+                try code.make(arena.allocator(), .jump, &.{6}),
+                try code.make(arena.allocator(), .null_, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
 }
 
 test "let statement scopes" {

@@ -1040,6 +1040,21 @@ test "+= and -=" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "while expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "let i = 0; while (i < 5) { i += 1; }; i;", .expected = .{ .integer = 5 } },
+        .{ .input = "while (false) { 1 };", .expected = .null_ },
+        .{ .input = "let i = 0; let total = 0; while (i < 5) { i += 1; total += i; }; total;", .expected = .{ .integer = 15 } },
+        .{ .input = "let f = fn() { let i = 0; while (i < 3) { i += 1; }; i; }; f();", .expected = .{ .integer = 3 } },
+        .{ .input = "let f = fn() { while (true) { return 3; } }; f();", .expected = .{ .integer = 3 } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);

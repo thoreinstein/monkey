@@ -48,6 +48,7 @@ pub fn init(allocator: std.mem.Allocator, lexer: Lexer) !Self {
     try parser.registerPrefix(.false_, Self.parseBoolean);
     try parser.registerPrefix(.lparen, Self.parseGroupedExpression);
     try parser.registerPrefix(.if_, Self.parseIfExpression);
+    try parser.registerPrefix(.while_, Self.parseWhileExpression);
     try parser.registerPrefix(.function, Self.parseFunctionLiteral);
     try parser.registerPrefix(.string, Self.parseStringLiteral);
     try parser.registerPrefix(.lbracket, Self.parseArrayLiteral);
@@ -494,6 +495,29 @@ fn parseGroupedExpression(self: *Self) !?*ast.Expression {
     return exp;
 }
 
+fn parseWhileExpression(self: *Self) !?*ast.Expression {
+    var expression = ast.WhileExpression{
+        .token = self.current_token,
+    };
+
+    if (!(try self.expectPeek(.lparen))) return null;
+
+    self.nextToken();
+
+    expression.condition = try self.parseExpression(.lowest) orelse return null;
+
+    if (!(try self.expectPeek(.rparen))) return null;
+    if (!(try self.expectPeek(.lbrace))) return null;
+
+    expression.body = try self.parseBlockStatement() orelse return null;
+
+    const new = try self.allocator.create(ast.Expression);
+
+    new.* = .{ .while_expression = expression };
+
+    return new;
+}
+
 fn parseIfExpression(self: *Self) !?*ast.Expression {
     var expression = ast.IfExpression{
         .token = self.current_token,
@@ -901,6 +925,46 @@ test "if expressions" {
     };
 
     try testIdentifier(consequence.expression.?, "x");
+}
+
+test "while expression" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const input = "while (i < 5) { i += 5; };";
+
+    const program = try parseAndCheckProgram(arena.allocator(), input, 1);
+
+    const expr_stmt = try getExpressionStatement(program);
+
+    const while_exp = switch (expr_stmt.expression.?.*) {
+        .while_expression => |we| we,
+        else => {
+            std.debug.print("stmt not WhileExpression. got={s}\n", .{@tagName(expr_stmt.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testInfixExpression(while_exp.condition, .{ .ident = "i" }, "<", .{ .int = 5 });
+    try testing.expectEqual(@as(usize, 1), while_exp.body.statements.items.len);
+
+    const body = switch (while_exp.body.statements.items[0]) {
+        .expression_statement => |es| es,
+        else => {
+            std.debug.print("body not ExpressionStatement. got={s}\n", .{@tagName(while_exp.body.statements.items[0])});
+            return error.WrongStatementType;
+        },
+    };
+
+    const assign_exp = switch (body.expression.?.*) {
+        .assign_expression => |ae| ae,
+        else => {
+            std.debug.print("consequence not AssignExpression. got={s}\n", .{@tagName(body.expression.?.*)});
+            return error.WrongStatementType;
+        },
+    };
+
+    try testing.expectEqualStrings("i", assign_exp.name.value);
 }
 
 test "if else expression" {

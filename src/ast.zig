@@ -50,6 +50,7 @@ pub const Expression = union(enum) {
     identifier_expression: Identifier,
     boolean_expression: BooleanExpression,
     if_expression: IfExpression,
+    while_expression: WhileExpression,
     call_expression: CallExpression,
     index_expression: IndexExpression,
     assign_expression: AssignExpression,
@@ -250,6 +251,25 @@ pub const IfExpression = struct {
             try out.writeAll("else ");
             try a.write(out);
         }
+    }
+};
+
+pub const WhileExpression = struct {
+    const Self = @This();
+
+    token: token.Token,
+    condition: *Expression = undefined,
+    body: BlockStatement = undefined,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        try out.writeAll("while");
+        try self.condition.write(out);
+        try out.writeAll(" ");
+        try self.body.write(out);
     }
 };
 
