@@ -1,5 +1,6 @@
 const std = @import("std");
 const io = std.Io;
+const clap = @import("clap");
 
 const Environment = @import("environment.zig");
 const repl = @import("repl.zig");
