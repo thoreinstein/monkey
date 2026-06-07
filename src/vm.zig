@@ -1055,6 +1055,19 @@ test "while expressions" {
     try runVMTests(arena.allocator(), &tests);
 }
 
+test "break and continue statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]VMTestCase{
+        .{ .input = "let i = 0; while (true) { i += 1; if (i == 5) { break; } }; i;", .expected = .{ .integer = 5 } },
+        .{ .input = "let s = 0; let i = 0; while (i < 5) { i += 1; if (i == 3) { continue; } s += i; }; s;", .expected = .{ .integer = 12 } },
+        .{ .input = "let f = fn() { while (true) { return 3; } }; f();", .expected = .{ .integer = 3 } },
+    };
+
+    try runVMTests(arena.allocator(), &tests);
+}
+
 fn parse(allocator: std.mem.Allocator, input: []const u8) !ast.Program {
     const lexer = Lexer.init(input);
     var parser = try Parser.init(allocator, lexer);

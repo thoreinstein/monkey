@@ -14,6 +14,8 @@ pub fn eval(allocator: std.mem.Allocator, node: ast.Node, env: *Environment) err
         .program => |p| return try evalProgram(allocator, p, env),
         .statement => |s| {
             switch (s) {
+                .break_statement => return .{ .break_signal = .{} },
+                .continue_statement => return .{ .continue_signal = .{} },
                 .expression_statement => |es| return try eval(allocator, .{ .expression = es.expression.?.* }, env),
                 .block_statement => |bs| return try evalBlockStatement(allocator, bs, env),
                 .return_statement => |rs| {
@@ -125,6 +127,10 @@ fn evalProgram(allocator: std.mem.Allocator, program: ast.Program, env: *Environ
         if (result) |r| switch (r) {
             .return_value => |rv| return rv.value.*,
             .error_ => return result,
+            .break_signal, .continue_signal => {
+                const msg = try std.fmt.allocPrint(allocator, "{s} outside of loop", .{r.kind()});
+                return .{ .error_ = .{ .message = msg } };
+            },
             else => {},
         };
     }
@@ -154,7 +160,10 @@ fn evalBlockStatement(allocator: std.mem.Allocator, block: ast.BlockStatement, e
         result = try eval(allocator, .{ .statement = stmt }, env);
 
         if (result) |r| {
-            if (std.mem.eql(u8, object.RETURN_VALUE_OBJ, r.kind()) or std.mem.eql(u8, object.ERROR_OBJ, r.kind())) return r;
+            switch (r) {
+                .return_value, .error_, .break_signal, .continue_signal => return result,
+                else => {},
+            }
         }
     }
 
@@ -311,6 +320,8 @@ fn evalWhileExpression(allocator: std.mem.Allocator, exp: ast.WhileExpression, e
         if (result) |r| {
             if (isError(r)) return r;
             if (r == .return_value) return r;
+            if (r == .break_signal) break;
+            if (r == .continue_signal) continue;
         }
     }
 
@@ -393,6 +404,11 @@ fn applyFunction(allocator: std.mem.Allocator, func: object.Object, args: std.Ar
 
             return switch (evaluated) {
                 .return_value => |rv| rv.value.*,
+                .break_signal, .continue_signal => blk: {
+                    const msg = try std.fmt.allocPrint(allocator, "{s} outside of loop", .{evaluated.kind()});
+
+                    break :blk .{ .error_ = .{ .message = msg } };
+                },
                 else => evaluated,
             };
         },
@@ -1031,6 +1047,46 @@ test "while loops" {
     const evaluated = try testEval(arena.allocator(), input, &env) orelse return error.NoEval;
 
     try testIntegerObject(evaluated, 5);
+}
+
+test "break and continue statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var env = Environment.init(arena.allocator());
+    defer env.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: Expected,
+    }{
+        .{ .input = "let i = 0; while (true) { i += 1; if (i == 5) { break; } }; i;", .expected = .{ .int = 5 } },
+        .{ .input = "let s = 0; let i = 0; while (i < 5) { i += 1; if (i == 3) { continue; } s += i; }; s;", .expected = .{ .int = 12 } },
+        .{ .input = "break;", .expected = .{ .error_ = "BREAK outside of loop" } },
+        .{ .input = "let f = fn() { break; }; let i = 0; while (i < 1) { f(); i += 1; };", .expected = .{ .error_ = "BREAK outside of loop" } },
+        .{ .input = "let f = fn() { while (true) { return 3; } }; f();", .expected = .{ .int = 3 } },
+    };
+
+    for (tests) |t| {
+        errdefer std.debug.print("test case failed: {s}\n", .{t.input});
+        const evaluated = try testEval(arena.allocator(), t.input, &env) orelse return error.NoEval;
+
+        switch (t.expected) {
+            .int => |i| try testIntegerObject(evaluated, i),
+            .error_ => |e| {
+                const err_obj = switch (evaluated) {
+                    .error_ => |err| err,
+                    else => {
+                        std.debug.print("obj is not Error. got={s}\n", .{@tagName(evaluated)});
+                        return error.WrongExpressionType;
+                    },
+                };
+
+                try testing.expectEqualStrings(e, err_obj.message);
+            },
+            else => return error.WrongExpectedType,
+        }
+    }
 }
 
 fn testEval(allocator: std.mem.Allocator, input: []const u8, env: *Environment) !?object.Object {

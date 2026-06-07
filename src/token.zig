@@ -9,6 +9,8 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "true", .true_ },
     .{ "false", .false_ },
     .{ "while", .while_ },
+    .{ "break", .break_ },
+    .{ "continue", .continue_ },
 });
 
 pub const TokenKind = enum {
@@ -55,6 +57,8 @@ pub const TokenKind = enum {
     true_,
     false_,
     while_,
+    break_,
+    continue_,
 };
 
 pub const Token = struct {

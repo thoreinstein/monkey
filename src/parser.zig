@@ -115,6 +115,16 @@ fn parseStatement(self: *Self) !?ast.Statement {
 
             return .{ .return_statement = ret };
         },
+        .break_ => {
+            const break_ = self.parseBreakStatement();
+
+            return .{ .break_statement = break_ };
+        },
+        .continue_ => {
+            const continue_ = self.parseContinueStatement();
+
+            return .{ .continue_statement = continue_ };
+        },
         else => {
             const exp = try self.parseExpressionStatement() orelse return null;
 
@@ -142,6 +152,22 @@ fn parseLetStatement(self: *Self) !?ast.LetStatement {
         .function_literal => |*fl| fl.name = statement.name.value,
         else => {},
     }
+
+    if (self.peekTokenIs(.semicolon)) self.nextToken();
+
+    return statement;
+}
+
+fn parseContinueStatement(self: *Self) ast.ContinueStatement {
+    const statement = ast.ContinueStatement{ .token = self.current_token };
+
+    if (self.peekTokenIs(.semicolon)) self.nextToken();
+
+    return statement;
+}
+
+fn parseBreakStatement(self: *Self) ast.BreakStatement {
+    const statement = ast.BreakStatement{ .token = self.current_token };
 
     if (self.peekTokenIs(.semicolon)) self.nextToken();
 
@@ -965,6 +991,29 @@ test "while expression" {
     };
 
     try testing.expectEqualStrings("i", assign_exp.name.value);
+}
+
+test "break and continue statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]struct {
+        input: []const u8,
+        expected: std.meta.Tag(ast.Statement),
+    }{
+        .{ .input = "break;", .expected = .break_statement },
+        .{ .input = "continue;", .expected = .continue_statement },
+        .{ .input = "break", .expected = .break_statement },
+        .{ .input = "continue", .expected = .continue_statement },
+    };
+
+    for (tests) |t| {
+        errdefer std.debug.print("test case failed: {s}\n", .{t.input});
+
+        const program = try parseAndCheckProgram(arena.allocator(), t.input, 1);
+
+        try testing.expectEqual(t.expected, std.meta.activeTag(program.statements.items[0]));
+    }
 }
 
 test "if else expression" {

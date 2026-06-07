@@ -18,6 +18,8 @@ pub const ARRAY_OBJ = "ARRAY";
 pub const HASH_OBJ = "HASH";
 pub const COMPILED_FUNCTION_OBJ = "COMPILED_FUNCTION_OBJ";
 pub const CLOSURE_OBJ = "CLOSURE";
+pub const BREAK_OBJ = "BREAK";
+pub const CONTINUE_OBJ = "CONTINUE";
 
 const BuiltinFunction = *const fn (allocator: std.mem.Allocator, args: []Object) error{OutOfMemory}!?Object;
 
@@ -42,6 +44,8 @@ pub const Object = union(enum) {
     return_value: ReturnValue,
     string: String,
     closure: *Closure,
+    break_signal: BreakSignal,
+    continue_signal: ContinueSignal,
 
     pub fn kind(self: Self) []const u8 {
         return switch (self) {
@@ -341,6 +345,40 @@ pub const Closure = struct {
 
     pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(allocator, "Closure[{}]", .{self});
+    }
+};
+
+pub const BreakSignal = struct {
+    const Self = @This();
+
+    pub fn kind(self: Self) []const u8 {
+        _ = self;
+
+        return BREAK_OBJ;
+    }
+
+    pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        _ = self;
+        _ = allocator;
+
+        return "break";
+    }
+};
+
+pub const ContinueSignal = struct {
+    const Self = @This();
+
+    pub fn kind(self: Self) []const u8 {
+        _ = self;
+
+        return CONTINUE_OBJ;
+    }
+
+    pub fn inspect(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        _ = self;
+        _ = allocator;
+
+        return "continue";
     }
 };
 

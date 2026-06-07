@@ -4,6 +4,7 @@ const testing = std.testing;
 const ByteCode = @import("helpers.zig").ByteCode;
 const EmittedInstruction = @import("helpers.zig").EmittedInstruction;
 const CompilationScope = @import("helpers.zig").CompilationScope;
+const LoopContext = @import("helpers.zig").LoopContext;
 
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
@@ -29,6 +30,7 @@ pub fn init(allocator: std.mem.Allocator) !Self {
         .instructions = std.ArrayList(u8).empty,
         .last_instruction = null,
         .previous_instruction = null,
+        .loops = std.ArrayList(LoopContext).empty,
     };
 
     var scopes = std.ArrayList(CompilationScope).empty;
@@ -163,6 +165,11 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                 .while_expression => |we| {
                     const loop_start = self.currentInstructions().len;
 
+                    try self.scopes.items[self.scope_index].loops.append(allocator, .{
+                        .loop_start = loop_start,
+                        .break_positions = .empty,
+                    });
+
                     try self.compile(allocator, .{ .expression = we.condition.* });
 
                     const not_truthy_pos = try self.emit(allocator, .jump_not_truthy, &.{9999});
@@ -174,6 +181,12 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
                     const after_loop_pos = self.currentInstructions().len;
 
                     try self.changeOperand(allocator, not_truthy_pos, &.{after_loop_pos});
+
+                    const ctx = self.scopes.items[self.scope_index].loops.pop().?;
+
+                    for (ctx.break_positions.items) |pos| {
+                        try self.changeOperand(allocator, pos, &.{after_loop_pos});
+                    }
 
                     _ = try self.emit(allocator, .null_, &.{});
                 },
@@ -295,6 +308,22 @@ pub fn compile(self: *Self, allocator: std.mem.Allocator, node: ast.Node) !void 
 
                 _ = try self.emit(allocator, .pop, &.{});
             },
+            .break_statement => {
+                const scope = &self.scopes.items[self.scope_index];
+
+                if (scope.loops.items.len == 0) return error.BreakOutsideLoop;
+
+                const pos = try self.emit(allocator, .jump, &.{9999});
+
+                try scope.loops.items[scope.loops.items.len - 1].break_positions.append(allocator, pos);
+            },
+            .continue_statement => {
+                const scope = &self.scopes.items[self.scope_index];
+
+                if (scope.loops.items.len == 0) return error.ContinueOutsiedLoop;
+
+                _ = try self.emit(allocator, .jump, &.{scope.loops.items[scope.loops.items.len - 1].loop_start});
+            },
         },
     }
 }
@@ -311,6 +340,7 @@ fn enterScope(self: *Self, allocator: std.mem.Allocator) !void {
         .instructions = std.ArrayList(u8).empty,
         .last_instruction = null,
         .previous_instruction = null,
+        .loops = .empty,
     };
 
     try self.scopes.append(allocator, scope);
@@ -1466,6 +1496,54 @@ test "while expression" {
     try runCompilerTests(arena.allocator(), &tests);
 }
 
+test "break and continue statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const tests = [_]CompilerTestCase{
+        .{
+            .input = "while (true) { break; };",
+            .expected_constants = &.{},
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .true_, &.{}),
+                try code.make(arena.allocator(), .jump_not_truthy, &.{10}),
+                try code.make(arena.allocator(), .jump, &.{10}),
+                try code.make(arena.allocator(), .jump, &.{0}),
+                try code.make(arena.allocator(), .null_, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+        .{
+            .input = "let i = 0; while (i < 2) { i += 1; continue; };",
+            .expected_constants = &.{
+                .{ .integer = 0 },
+                .{ .integer = 2 },
+                .{ .integer = 1 },
+            },
+            .expected_instructions = &.{
+                try code.make(arena.allocator(), .constant, &.{0}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{1}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .greater_than, &.{}),
+                try code.make(arena.allocator(), .jump_not_truthy, &.{36}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .constant, &.{2}),
+                try code.make(arena.allocator(), .add, &.{}),
+                try code.make(arena.allocator(), .set_global, &.{0}),
+                try code.make(arena.allocator(), .get_global, &.{0}),
+                try code.make(arena.allocator(), .pop, &.{}),
+                try code.make(arena.allocator(), .jump, &.{6}),
+                try code.make(arena.allocator(), .jump, &.{6}),
+                try code.make(arena.allocator(), .null_, &.{}),
+                try code.make(arena.allocator(), .pop, &.{}),
+            },
+        },
+    };
+
+    try runCompilerTests(arena.allocator(), &tests);
+}
+
 test "let statement scopes" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -1599,6 +1677,13 @@ fn runCompilerTests(allocator: std.mem.Allocator, tests: []const CompilerTestCas
 
 fn testInstructions(allocator: std.mem.Allocator, expected: []const code.Instructions, actual: code.Instructions) !void {
     const concatted = try concatInstructions(allocator, expected);
+
+    errdefer {
+        const want = code.formatInstructions(allocator, concatted) catch "<fmt failed>";
+        const got = code.formatInstructions(allocator, actual) catch "<fmt failed>";
+
+        std.debug.print("\nwant:\n{s}\ngot:\n{s}\n", .{ want, got });
+    }
 
     try testing.expectEqual(concatted.len, actual.len);
 

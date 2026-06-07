@@ -30,6 +30,8 @@ pub const Statement = union(enum) {
     return_statement: ReturnStatement,
     expression_statement: ExpressionStatement,
     block_statement: BlockStatement,
+    break_statement: BreakStatement,
+    continue_statement: ContinueStatement,
 
     pub fn tokenLiteral(self: Self) []const u8 {
         return switch (self) {
@@ -431,6 +433,38 @@ pub const AssignExpression = struct {
         try self.name.write(out);
         try out.writeAll(" = ");
         try self.value.write(out);
+    }
+};
+
+pub const BreakStatement = struct {
+    const Self = @This();
+
+    token: token.Token,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        _ = self;
+
+        try out.writeAll("break");
+    }
+};
+
+pub const ContinueStatement = struct {
+    const Self = @This();
+
+    token: token.Token,
+
+    pub fn tokenLiteral(self: Self) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: Self, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        _ = self;
+
+        try out.writeAll("continue");
     }
 };
 

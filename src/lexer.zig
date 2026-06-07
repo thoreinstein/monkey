@@ -184,6 +184,8 @@ test "next token" {
         \\x += 1;
         \\x -= 1;
         \\while (i < 5) { i += 1; };
+        \\while (i < 5) { break; };
+        \\while (i < 5) { continue; };
     ;
 
     const tests = [_]struct {
@@ -306,6 +308,28 @@ test "next token" {
         .{ .kind = .ident, .literal = "i" },
         .{ .kind = .plus_assign, .literal = "+=" },
         .{ .kind = .int, .literal = "1" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .rbrace, .literal = "}" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .while_, .literal = "while" },
+        .{ .kind = .lparen, .literal = "(" },
+        .{ .kind = .ident, .literal = "i" },
+        .{ .kind = .lt, .literal = "<" },
+        .{ .kind = .int, .literal = "5" },
+        .{ .kind = .rparen, .literal = ")" },
+        .{ .kind = .lbrace, .literal = "{" },
+        .{ .kind = .break_, .literal = "break" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .rbrace, .literal = "}" },
+        .{ .kind = .semicolon, .literal = ";" },
+        .{ .kind = .while_, .literal = "while" },
+        .{ .kind = .lparen, .literal = "(" },
+        .{ .kind = .ident, .literal = "i" },
+        .{ .kind = .lt, .literal = "<" },
+        .{ .kind = .int, .literal = "5" },
+        .{ .kind = .rparen, .literal = ")" },
+        .{ .kind = .lbrace, .literal = "{" },
+        .{ .kind = .continue_, .literal = "continue" },
         .{ .kind = .semicolon, .literal = ";" },
         .{ .kind = .rbrace, .literal = "}" },
         .{ .kind = .semicolon, .literal = ";" },
