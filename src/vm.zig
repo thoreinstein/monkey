@@ -60,154 +60,260 @@ pub fn initWithGlobalStore(allocator: std.mem.Allocator, bytecode: ByteCode, s: 
 pub fn run(self: *Self) !void {
     var frame = self.currentFrame();
     var ins = frame.instructions();
+    var ip: usize = 0;
+    var bp: usize = frame.base_pointer;
 
-    while (frame.ip < @as(i64, @intCast(ins.len)) - 1) {
-        frame.ip += 1;
+    dispatch: switch (fetchOp(ins, &ip) orelse return) {
+        .current_closure => {
+            const current_closure = frame.closure;
 
-        const ip: usize = @intCast(frame.ip);
-        const op: code.Opcode = @enumFromInt(ins[ip]);
+            try self.push(.{ .closure = current_closure });
 
-        switch (op) {
-            .current_closure => {
-                const current_closure = frame.closure;
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .get_free => {
+            const free_index = std.mem.readInt(u8, ins[ip..][0..1], .big);
+            ip += 1;
 
-                try self.push(.{ .closure = current_closure });
-            },
-            .get_free => {
-                const free_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                frame.ip += 1;
+            const current_closure = frame.closure;
 
-                const current_closure = frame.closure;
+            try self.push(current_closure.free[free_index]);
 
-                try self.push(current_closure.free[free_index]);
-            },
-            .closure => {
-                const index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                const num_free = std.mem.readInt(u8, ins[ip + 3 ..][0..1], .big);
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .closure => {
+            const index = std.mem.readInt(u16, ins[ip..][0..2], .big);
+            const num_free = std.mem.readInt(u8, ins[ip + 2 ..][0..1], .big);
 
-                frame.ip += 3;
+            ip += 3;
 
-                try self.pushClosure(index, num_free);
-            },
-            .return_value => {
-                const rv = self.pop();
+            try self.pushClosure(index, num_free);
 
-                const popped = self.popFrame();
-                self.sp = popped.base_pointer - 1;
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .return_value => {
+            const rv = self.pop();
 
-                try self.push(rv);
+            const popped = self.popFrame();
+            self.sp = popped.base_pointer - 1;
 
-                frame = self.currentFrame();
-                ins = frame.instructions();
-            },
-            .return_ => {
-                const popped = self.popFrame();
-                self.sp = popped.base_pointer - 1;
+            try self.push(rv);
 
-                try self.push(.null_);
+            frame = self.currentFrame();
+            ins = frame.instructions();
+            ip = frame.ip;
+            bp = frame.base_pointer;
 
-                frame = self.currentFrame();
-                ins = frame.instructions();
-            },
-            .call => {
-                const num_args = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                frame.ip += 1;
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .return_ => {
+            const popped = self.popFrame();
+            self.sp = popped.base_pointer - 1;
 
-                try self.executeCall(num_args);
+            try self.push(.null_);
 
-                frame = self.currentFrame();
-                ins = frame.instructions();
-            },
-            .index => {
-                const index = self.pop();
-                const left = self.pop();
+            frame = self.currentFrame();
+            ins = frame.instructions();
+            ip = frame.ip;
+            bp = frame.base_pointer;
 
-                try self.executeIndexOperation(left, index);
-            },
-            .hash => {
-                const num_elem: usize = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                frame.ip += 2;
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .call => {
+            const num_args = std.mem.readInt(u8, ins[ip..][0..1], .big);
+            ip += 1;
 
-                const hash = try self.buildHash(self.sp - num_elem, self.sp);
+            frame.ip = ip;
+            try self.executeCall(num_args);
 
-                self.sp = self.sp - num_elem;
+            frame = self.currentFrame();
+            ins = frame.instructions();
+            ip = frame.ip;
+            bp = frame.base_pointer;
 
-                try self.push(hash);
-            },
-            .array => {
-                const num_elem: usize = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                frame.ip += 2;
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .index => {
+            const index = self.pop();
+            const left = self.pop();
 
-                const array = try self.buildArray(self.sp - num_elem, self.sp);
+            try self.executeIndexOperation(left, index);
 
-                self.sp = self.sp - num_elem;
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .hash => {
+            const num_elem: usize = std.mem.readInt(u16, ins[ip..][0..2], .big);
+            ip += 2;
 
-                try self.push(array);
-            },
-            .get_builtin => {
-                const builtin_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                frame.ip += 1;
+            const hash = try self.buildHash(self.sp - num_elem, self.sp);
 
-                const definition = builtins[builtin_index];
+            self.sp = self.sp - num_elem;
 
-                try self.push(.{ .builtin = definition.builtin });
-            },
-            .get_global => {
-                const global_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                frame.ip += 2;
+            try self.push(hash);
 
-                try self.push(self.globals[global_index]);
-            },
-            .get_local => {
-                const local_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                frame.ip += 1;
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .array => {
+            const num_elem: usize = std.mem.readInt(u16, ins[ip..][0..2], .big);
+            ip += 2;
 
-                frame = self.currentFrame();
+            const array = try self.buildArray(self.sp - num_elem, self.sp);
 
-                try self.push(self.stack[frame.base_pointer + local_index]);
-            },
-            .set_global => {
-                const global_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                frame.ip += 2;
+            self.sp = self.sp - num_elem;
 
-                self.globals[global_index] = self.pop();
-            },
-            .set_local => {
-                const local_index = std.mem.readInt(u8, ins[ip + 1 ..][0..1], .big);
-                frame.ip += 1;
+            try self.push(array);
 
-                frame = self.currentFrame();
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .get_builtin => {
+            const builtin_index = std.mem.readInt(u8, ins[ip..][0..1], .big);
+            ip += 1;
 
-                self.stack[frame.base_pointer + local_index] = self.pop();
-            },
-            .constant => {
-                const const_index = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                frame.ip += 2;
+            const definition = builtins[builtin_index];
 
-                try self.push(self.constants[const_index]);
-            },
-            .jump => {
-                const pos: i64 = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                frame.ip = pos - 1;
-            },
-            .jump_not_truthy => {
-                const pos: i64 = std.mem.readInt(u16, ins[ip + 1 ..][0..2], .big);
-                frame.ip += 2;
+            try self.push(.{ .builtin = definition.builtin });
 
-                const condition = self.pop();
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .get_global => {
+            const global_index = std.mem.readInt(u16, ins[ip..][0..2], .big);
+            ip += 2;
 
-                if (!isTruthy(condition)) frame.ip = pos - 1;
-            },
-            .add, .sub, .mul, .div => try self.executeBinaryOperation(op),
-            .true_ => try self.push(.{ .boolean = .{ .value = true } }),
-            .false_ => try self.push(.{ .boolean = .{ .value = false } }),
-            .equal, .not_equal, .greater_than => try self.executeComparison(op),
-            .bang => try self.executeBangOperator(),
-            .minus => try self.executeMinusOperator(),
-            .null_ => try self.push(.null_),
-            .pop => _ = self.pop(),
-        }
+            try self.push(self.globals[global_index]);
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .get_local => {
+            const local_index = std.mem.readInt(u8, ins[ip..][0..1], .big);
+            ip += 1;
+
+            try self.push(self.stack[bp + local_index]);
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .set_global => {
+            const global_index = std.mem.readInt(u16, ins[ip..][0..2], .big);
+            ip += 2;
+
+            self.globals[global_index] = self.pop();
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .set_local => {
+            const local_index = std.mem.readInt(u8, ins[ip..][0..1], .big);
+            ip += 1;
+
+            self.stack[bp + local_index] = self.pop();
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .constant => {
+            const const_index = std.mem.readInt(u16, ins[ip..][0..2], .big);
+            ip += 2;
+
+            try self.push(self.constants[const_index]);
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .jump => {
+            const pos = std.mem.readInt(u16, ins[ip..][0..2], .big);
+            ip = pos;
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .jump_not_truthy => {
+            const pos = std.mem.readInt(u16, ins[ip..][0..2], .big);
+            ip += 2;
+
+            const condition = self.pop();
+
+            if (!isTruthy(condition)) ip = pos;
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .add, .sub, .mul, .div => |op| {
+            const left = &self.stack[self.sp - 2];
+            const right = &self.stack[self.sp - 1];
+
+            if (left.* == .integer and right.* == .integer) {
+                const l = left.integer.value;
+                const r = right.integer.value;
+
+                left.integer.value = switch (op) {
+                    .add => l + r,
+                    .sub => l - r,
+                    .mul => l * r,
+                    .div => @divTrunc(l, r),
+                    else => unreachable,
+                };
+                self.sp -= 1;
+            } else {
+                try self.executeBinaryOperation(op);
+            }
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .true_ => {
+            try self.push(.{ .boolean = .{ .value = true } });
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .false_ => {
+            try self.push(.{ .boolean = .{ .value = false } });
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .equal, .not_equal, .greater_than => |op| {
+            const left = &self.stack[self.sp - 2];
+            const right = &self.stack[self.sp - 1];
+
+            if (left.* == .integer and right.* == .integer) {
+                const l = left.integer.value;
+                const r = right.integer.value;
+
+                left.* = .{ .boolean = .{ .value = switch (op) {
+                    .equal => l == r,
+                    .not_equal => l != r,
+                    .greater_than => l > r,
+                    else => unreachable,
+                } } };
+                self.sp -= 1;
+            } else {
+                try self.executeComparison(op);
+            }
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .bang => {
+            try self.executeBangOperator();
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .minus => {
+            try self.executeMinusOperator();
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .null_ => {
+            try self.push(.null_);
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
+        .pop => {
+            _ = self.pop();
+
+            continue :dispatch fetchOp(ins, &ip) orelse return;
+        },
     }
+}
+
+inline fn fetchOp(ins: code.Instructions, ip: *usize) ?code.Opcode {
+    if (ip.* >= ins.len) return null;
+
+    const op: code.Opcode = @enumFromInt(ins[ip.*]);
+    ip.* += 1;
+
+    return op;
 }
 
 pub fn stackTop(self: Self) ?object.Object {
@@ -376,21 +482,9 @@ fn executeCall(self: *Self, num_args: usize) !void {
 
     switch (callee) {
         .closure => |c| try self.callClosure(c, num_args),
-        .compiled_function => |cf| try self.callFunction(cf, num_args),
         .builtin => |b| try self.callBuiltin(b, num_args),
         else => return error.CallingNonFunction,
     }
-}
-
-fn callFunction(self: *Self, fn_obj: *object.CompiledFunction, num_args: usize) !void {
-    if (num_args != fn_obj.num_parameters) return error.WrongNumberOfArguments;
-
-    const closure = try self.allocator.create(object.Closure);
-    closure.* = .{ .func = fn_obj };
-
-    const frame = Frame.init(closure, self.sp - num_args);
-    self.pushFrame(frame);
-    self.sp = frame.base_pointer + fn_obj.num_locals;
 }
 
 fn callBuiltin(self: *Self, builtin: object.Builtin, num_args: usize) !void {
